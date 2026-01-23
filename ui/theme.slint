@@ -1,0 +1,317 @@
+// Tweakers - Dark theme with red/orange accents
+// Target: Ubuntu + COSMIC DE
+
+export global Theme {
+    // Colors
+    out property <color> background: #0a0a0a;
+    out property <color> surface: #1a1a1a;
+    out property <color> surface-variant: #252525;
+    out property <color> primary: #ff4444;
+    out property <color> primary-hover: #ff6666;
+    out property <color> accent: #ff8c00;
+    out property <color> accent-hover: #ffa033;
+    out property <color> text-primary: #ffffff;
+    out property <color> text-secondary: #b0b0b0;
+    out property <color> text-muted: #666666;
+    out property <color> success: #44ff44;
+    out property <color> warning: #ffaa00;
+    out property <color> error: #ff4444;
+    out property <color> border: #333333;
+    
+    // Spacing
+    out property <length> spacing-xs: 4px;
+    out property <length> spacing-sm: 8px;
+    out property <length> spacing-md: 16px;
+    out property <length> spacing-lg: 24px;
+    out property <length> spacing-xl: 32px;
+    
+    // Border radius
+    out property <length> radius-sm: 4px;
+    out property <length> radius-md: 8px;
+    out property <length> radius-lg: 12px;
+    
+    // Font sizes
+    out property <length> font-xs: 11px;
+    out property <length> font-sm: 13px;
+    out property <length> font-md: 15px;
+    out property <length> font-lg: 18px;
+    out property <length> font-xl: 24px;
+    out property <length> font-xxl: 32px;
+}
+
+// Reusable button component
+export component TweakButton inherits Rectangle {
+    in property <string> label: "Button";
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    callback clicked;
+    
+    height: 36px;
+    min-width: 100px;
+    border-radius: Theme.radius-md;
+    background: primary ? Theme.primary : Theme.surface-variant;
+    
+    states [
+        disabled when !enabled: {
+            opacity: 0.5;
+        }
+        hovered when touch.has-hover && enabled: {
+            background: primary ? Theme.primary-hover : Theme.border;
+        }
+    ]
+    
+    touch := TouchArea {
+        mouse-cursor: enabled ? pointer : default;
+        clicked => {
+            if enabled {
+                root.clicked();
+            }
+        }
+    }
+    
+    HorizontalLayout {
+        padding: Theme.spacing-sm;
+        alignment: center;
+        
+        Text {
+            text: label;
+            color: Theme.text-primary;
+            font-size: Theme.font-sm;
+            font-weight: 500;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Card component for tweak sections
+export component Card inherits Rectangle {
+    in property <string> title: "";
+    
+    background: Theme.surface;
+    border-radius: Theme.radius-lg;
+    
+    VerticalLayout {
+        padding: Theme.spacing-md;
+        spacing: Theme.spacing-sm;
+        
+        if title != "" : Text {
+            text: title;
+            color: Theme.accent;
+            font-size: Theme.font-lg;
+            font-weight: 600;
+        }
+        
+        @children
+    }
+}
+
+// Toggle switch component
+export component ToggleSwitch inherits Rectangle {
+    in-out property <bool> checked: false;
+    in property <string> label: "";
+    in property <bool> enabled: true;
+    callback toggled(bool);
+    
+    height: 32px;
+    
+    HorizontalLayout {
+        spacing: Theme.spacing-md;
+        alignment: start;
+        
+        Rectangle {
+            width: 48px;
+            height: 24px;
+            border-radius: 12px;
+            background: checked ? Theme.primary : Theme.surface-variant;
+            border-width: 1px;
+            border-color: Theme.border;
+            
+            animate background { duration: 150ms; }
+            
+            Rectangle {
+                x: checked ? 24px : 2px;
+                y: 2px;
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                background: Theme.text-primary;
+                
+                animate x { duration: 150ms; easing: ease-out; }
+            }
+            
+            TouchArea {
+                mouse-cursor: enabled ? pointer : default;
+                clicked => {
+                    if enabled {
+                        checked = !checked;
+                        toggled(checked);
+                    }
+                }
+            }
+        }
+        
+        Text {
+            text: label;
+            color: enabled ? Theme.text-primary : Theme.text-muted;
+            font-size: Theme.font-md;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Slider component
+export component TweakSlider inherits Rectangle {
+    in property <string> label: "";
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in-out property <float> value: 50;
+    in property <string> unit: "";
+    callback changed(float);
+    
+    height: 60px;
+    
+    VerticalLayout {
+        spacing: Theme.spacing-xs;
+        
+        HorizontalLayout {
+            Text {
+                text: label;
+                color: Theme.text-secondary;
+                font-size: Theme.font-sm;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: round(value) + unit;
+                color: Theme.accent;
+                font-size: Theme.font-sm;
+                font-weight: 600;
+            }
+        }
+        
+        Rectangle {
+            height: 24px;
+            
+            Rectangle {
+                y: 10px;
+                height: 4px;
+                border-radius: 2px;
+                background: Theme.surface-variant;
+                
+                Rectangle {
+                    width: parent.width * ((value - minimum) / (maximum - minimum));
+                    height: 100%;
+                    border-radius: 2px;
+                    background: Theme.primary;
+                }
+            }
+            
+            Rectangle {
+                x: parent.width * ((value - minimum) / (maximum - minimum)) - 8px;
+                y: 4px;
+                width: 16px;
+                height: 16px;
+                border-radius: 8px;
+                background: Theme.primary;
+                border-width: 2px;
+                border-color: Theme.text-primary;
+            }
+            
+            TouchArea {
+                moved => {
+                    if self.pressed {
+                        value = minimum + (maximum - minimum) * clamp(self.mouse-x / parent.width, 0, 1);
+                        changed(value);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Dropdown/Select component
+export component TweakSelect inherits Rectangle {
+    in property <string> label: "";
+    in property <[string]> options: [];
+    in-out property <int> selected-index: 0;
+    callback changed(int);
+    
+    height: 60px;
+    
+    VerticalLayout {
+        spacing: Theme.spacing-xs;
+        
+        Text {
+            text: label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-sm;
+        }
+        
+        Rectangle {
+            height: 36px;
+            background: Theme.surface-variant;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.border;
+            
+            HorizontalLayout {
+                padding-left: Theme.spacing-md;
+                padding-right: Theme.spacing-md;
+                
+                Text {
+                    text: options.length > 0 ? options[selected-index] : "";
+                    color: Theme.text-primary;
+                    font-size: Theme.font-md;
+                    vertical-alignment: center;
+                }
+                
+                Rectangle { horizontal-stretch: 1; }
+                
+                Text {
+                    text: "▼";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+            }
+            
+            TouchArea {
+                clicked => {
+                    selected-index = mod(selected-index + 1, options.length);
+                    changed(selected-index);
+                }
+            }
+        }
+    }
+}
+
+// Progress bar
+export component ProgressBar inherits Rectangle {
+    in property <float> progress: 0; // 0.0 to 1.0
+    in property <string> label: "";
+    
+    height: 24px;
+    
+    VerticalLayout {
+        if label != "" : Text {
+            text: label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-xs;
+        }
+        
+        Rectangle {
+            height: 8px;
+            background: Theme.surface-variant;
+            border-radius: 4px;
+            
+            Rectangle {
+                width: parent.width * clamp(progress, 0, 1);
+                height: 100%;
+                border-radius: 4px;
+                background: Theme.accent;
+                
+                animate width { duration: 200ms; }
+            }
+        }
+    }
+}

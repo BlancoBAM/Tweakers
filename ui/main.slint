@@ -1,0 +1,1085 @@
+// Tweakers - Main Application Window
+import { Theme, TweakButton, Card, ToggleSwitch, TweakSlider, TweakSelect, ProgressBar } from "theme.slint";
+
+// Sidebar navigation item
+component NavItem inherits Rectangle {
+    in property <string> label: "";
+    in property <string> icon: "";
+    in property <bool> active: false;
+    callback clicked;
+    
+    height: 48px;
+    background: active ? Theme.surface-variant : transparent;
+    border-radius: Theme.radius-md;
+    
+    states [
+        hovered when touch.has-hover && !active: {
+            background: Theme.surface;
+        }
+    ]
+    
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    
+    HorizontalLayout {
+        padding-left: Theme.spacing-md;
+        padding-right: Theme.spacing-md;
+        spacing: Theme.spacing-sm;
+        
+        Rectangle {
+            width: 4px;
+            background: active ? Theme.accent : transparent;
+            border-radius: 2px;
+        }
+        
+        Text {
+            text: icon;
+            font-size: Theme.font-lg;
+            color: active ? Theme.accent : Theme.text-secondary;
+            vertical-alignment: center;
+        }
+        
+        Text {
+            text: label;
+            font-size: Theme.font-md;
+            color: active ? Theme.text-primary : Theme.text-secondary;
+            font-weight: active ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Sudo password dialog
+component SudoDialog inherits Rectangle {
+    in property <bool> dialog-visible: false;
+    in property <string> action-description: "";
+    in-out property <string> password: "";
+    in property <bool> is-loading: false;
+    in property <string> error-message: "";
+    callback submit(string);
+    callback cancel;
+    
+    background: #00000099;
+    
+    if dialog-visible : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 400px;
+        height: 280px;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        
+        VerticalLayout {
+            padding: Theme.spacing-lg;
+            spacing: Theme.spacing-md;
+            
+            // Header
+            HorizontalLayout {
+                Text {
+                    text: "🔐";
+                    font-size: Theme.font-xl;
+                }
+                Text {
+                    text: "Authentication Required";
+                    font-size: Theme.font-lg;
+                    font-weight: 600;
+                    color: Theme.text-primary;
+                    vertical-alignment: center;
+                }
+            }
+            
+            // Description
+            Text {
+                text: action-description != "" ? action-description : "Enter your password to apply system changes";
+                color: Theme.text-secondary;
+                font-size: Theme.font-sm;
+                wrap: word-wrap;
+            }
+            
+            // Password input (simplified - real impl would use proper input)
+            Rectangle {
+                height: 40px;
+                background: Theme.surface-variant;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: error-message != "" ? Theme.error : Theme.border;
+                
+                HorizontalLayout {
+                    padding-left: Theme.spacing-md;
+                    padding-right: Theme.spacing-md;
+                    
+                    Text {
+                        text: password != "" ? "••••••••" : "Password";
+                        color: password != "" ? Theme.text-primary : Theme.text-muted;
+                        font-size: Theme.font-md;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            
+            // Error message
+            if error-message != "" : Text {
+                text: error-message;
+                color: Theme.error;
+                font-size: Theme.font-sm;
+            }
+            
+            // Loading indicator
+            if is-loading : ProgressBar {
+                progress: 0.5;
+                label: "Applying changes...";
+            }
+            
+            // Buttons
+            HorizontalLayout {
+                spacing: Theme.spacing-md;
+                alignment: end;
+                
+                TweakButton {
+                    label: "Cancel";
+                    enabled: !is-loading;
+                    clicked => { cancel(); }
+                }
+                
+                TweakButton {
+                    label: "Authenticate";
+                    primary: true;
+                    enabled: !is-loading;
+                    clicked => { submit(password); }
+                }
+            }
+        }
+    }
+}
+
+// Tweaks Tab Content
+component TweaksTab inherits Rectangle {
+    in-out property <int> cpu-governor-index: 1;
+    in-out property <bool> turbo-enabled: true;
+    in-out property <float> swappiness: 10;
+    in-out property <float> vfs-cache-pressure: 50;
+    in-out property <bool> zram-enabled: true;
+    in-out property <int> io-scheduler-index: 0;
+    in-out property <bool> trim-enabled: true;
+    in-out property <bool> intel-guc-enabled: false;
+    in-out property <bool> intel-psr-enabled: false;
+    in-out property <bool> intel-fbc-enabled: false;
+    in-out property <bool> wifi-powersave: false;
+    in-out property <bool> audio-powersave: false;
+    
+    // Network
+    in-out property <float> tcp-fastopen: 3;
+    in-out property <bool> tcp-low-latency: false;
+    in-out property <bool> bbr-enabled: false;
+    
+    // Kernel
+    in-out property <bool> watchdog-enabled: true;
+    in-out property <int> thp-index: 1; // 0: always, 1: madvise, 2: never
+    
+    callback apply-tweaks;
+    callback reset-defaults;
+    callback set-profile(string);
+    
+    background: Theme.background;
+    
+    Flickable {
+        viewport-height: content.preferred-height;
+        
+        content := VerticalLayout {
+            padding: Theme.spacing-lg;
+            spacing: Theme.spacing-lg;
+            
+            // Header
+            HorizontalLayout {
+                Text {
+                    text: "System Tweaks";
+                    font-size: Theme.font-xxl;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                TweakButton {
+                    label: "Reset All";
+                    clicked => { reset-defaults(); }
+                }
+                TweakButton {
+                    label: "Apply All";
+                    primary: true;
+                    clicked => { apply-tweaks(); }
+                }
+            }
+            
+            // Quick Profiles
+            Card {
+                title: "Quick Profiles";
+                
+                HorizontalLayout {
+                    spacing: Theme.spacing-sm;
+                    
+                    TweakButton { label: "🔋 Battery Saver"; clicked => { root.set-profile("battery"); } }
+                    TweakButton { label: "⚖️ Balanced"; clicked => { root.set-profile("balanced"); } }
+                    TweakButton { label: "🚀 Performance"; clicked => { root.set-profile("performance"); } }
+                    TweakButton { label: "📺 Presentation"; clicked => { root.set-profile("presentation"); } }
+                }
+            }
+            
+            // CPU & Performance
+            Card {
+                title: "CPU & Performance";
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    TweakSelect {
+                        label: "CPU Governor";
+                        options: ["powersave", "schedutil", "performance"];
+                        selected-index <=> cpu-governor-index;
+                    }
+                    
+                    ToggleSwitch {
+                        label: "Enable Turbo Boost";
+                        checked <=> turbo-enabled;
+                    }
+                }
+            }
+            
+            // Memory
+            Card {
+                title: "Memory Management";
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    TweakSlider {
+                        label: "Swappiness";
+                        minimum: 0;
+                        maximum: 100;
+                        value <=> swappiness;
+                        unit: "";
+                    }
+                    
+                    TweakSlider {
+                        label: "VFS Cache Pressure";
+                        minimum: 0;
+                        maximum: 200;
+                        value <=> vfs-cache-pressure;
+                        unit: "";
+                    }
+                    
+                    ToggleSwitch {
+                        label: "Enable ZRAM Compressed Swap";
+                        checked <=> zram-enabled;
+                    }
+                }
+            }
+            
+            // Storage
+            Card {
+                title: "Storage (NVMe)";
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    TweakSelect {
+                        label: "I/O Scheduler";
+                        options: ["none", "mq-deadline", "kyber"];
+                        selected-index <=> io-scheduler-index;
+                    }
+                    
+                    ToggleSwitch {
+                        label: "Enable Automatic TRIM (fstrim.timer)";
+                        checked <=> trim-enabled;
+                    }
+                }
+            }
+            
+            // GPU
+            Card {
+                title: "Intel GPU";
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    ToggleSwitch {
+                        label: "Enable GuC/HuC Firmware Loading";
+                        checked <=> intel-guc-enabled;
+                    }
+                    
+                    ToggleSwitch {
+                        label: "Enable Panel Self Refresh (PSR)";
+                        checked <=> intel-psr-enabled;
+                    }
+                    
+                    ToggleSwitch {
+                        label: "Enable Framebuffer Compression (FBC)";
+                        checked <=> intel-fbc-enabled;
+                    }
+                }
+            }
+            
+            // Power
+            Card {
+                title: "Power Management";
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    ToggleSwitch {
+                        label: "WiFi Power Save Mode";
+                        checked <=> wifi-powersave;
+                    }
+                    
+                    ToggleSwitch {
+                        label: "Audio Power Save";
+                        checked <=> audio-powersave;
+                    }
+                }
+            }
+            
+            // Network
+            Card {
+                title: "Network Optimization";
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    TweakSlider {
+                        label: "TCP Fast Open";
+                        minimum: 0;
+                        maximum: 3;
+                        value <=> tcp-fastopen;
+                        unit: "";
+                    }
+                    
+                    ToggleSwitch {
+                        label: "TCP Low Latency";
+                        checked <=> tcp-low-latency;
+                    }
+                    
+                    ToggleSwitch {
+                        label: "Enable BBR Congestion Control";
+                        checked <=> bbr-enabled;
+                    }
+                }
+            }
+            
+            // Kernel
+            Card {
+                title: "Kernel Tweaks";
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    ToggleSwitch {
+                        label: "Enable System Watchdog";
+                        checked <=> watchdog-enabled;
+                    }
+                    
+                    TweakSelect {
+                        label: "Transparent Huge Pages";
+                        options: ["always", "madvise", "never"];
+                        selected-index <=> thp-index;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Cleaner Tab Content
+component CleanerTab inherits Rectangle {
+    in property <float> apt-cache-size: 0;
+    in property <float> thumbnail-cache-size: 0;
+    in property <float> journal-size: 0;
+    in property <float> temp-size: 0;
+    in property <int> orphan-packages: 0;
+    in-out property <bool> apt-cache-selected: true;
+    in-out property <bool> thumbnail-selected: true;
+    in-out property <bool> journal-selected: false;
+    in-out property <bool> temp-selected: true;
+    in-out property <bool> orphan-selected: false;
+    in property <bool> is-scanning: false;
+    in property <bool> is-cleaning: false;
+    callback scan;
+    callback clean;
+    callback find-duplicates;
+    
+    background: Theme.background;
+    
+    VerticalLayout {
+        padding: Theme.spacing-lg;
+        spacing: Theme.spacing-lg;
+        
+        // Header
+        HorizontalLayout {
+            Text {
+                text: "System Cleaner";
+                font-size: Theme.font-xxl;
+                font-weight: 700;
+                color: Theme.text-primary;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            TweakButton {
+                label: is-scanning ? "Scanning..." : "Scan";
+                enabled: !is-scanning && !is-cleaning;
+                clicked => { scan(); }
+            }
+            TweakButton {
+                label: is-cleaning ? "Cleaning..." : "Clean Selected";
+                primary: true;
+                enabled: !is-scanning && !is-cleaning;
+                clicked => { clean(); }
+            }
+        }
+        
+        // Cleanable items
+        Card {
+            title: "Cache & Temporary Files";
+            
+            VerticalLayout {
+                spacing: Theme.spacing-sm;
+                
+                HorizontalLayout {
+                    spacing: Theme.spacing-md;
+                    ToggleSwitch {
+                        label: "APT Package Cache";
+                        checked <=> apt-cache-selected;
+                    }
+                    Text {
+                        text: apt-cache-size > 0 ? round(apt-cache-size) + " MB" : "—";
+                        color: Theme.accent;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+                
+                HorizontalLayout {
+                    spacing: Theme.spacing-md;
+                    ToggleSwitch {
+                        label: "Thumbnail Cache";
+                        checked <=> thumbnail-selected;
+                    }
+                    Text {
+                        text: thumbnail-cache-size > 0 ? round(thumbnail-cache-size) + " MB" : "—";
+                        color: Theme.accent;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+                
+                HorizontalLayout {
+                    spacing: Theme.spacing-md;
+                    ToggleSwitch {
+                        label: "System Journal Logs";
+                        checked <=> journal-selected;
+                    }
+                    Text {
+                        text: journal-size > 0 ? round(journal-size) + " MB" : "—";
+                        color: Theme.accent;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+                
+                HorizontalLayout {
+                    spacing: Theme.spacing-md;
+                    ToggleSwitch {
+                        label: "Temporary Files (/tmp, /var/tmp)";
+                        checked <=> temp-selected;
+                    }
+                    Text {
+                        text: temp-size > 0 ? round(temp-size) + " MB" : "—";
+                        color: Theme.accent;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        
+        Card {
+            title: "Orphaned Packages";
+            
+            VerticalLayout {
+                spacing: Theme.spacing-sm;
+                
+                HorizontalLayout {
+                    spacing: Theme.spacing-md;
+                    ToggleSwitch {
+                        label: "Remove orphaned configuration files";
+                        checked <=> orphan-selected;
+                    }
+                    Text {
+                        text: orphan-packages > 0 ? orphan-packages + " packages" : "—";
+                        color: Theme.warning;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+        
+        Card {
+            title: "Duplicate Finder";
+            
+            VerticalLayout {
+                spacing: Theme.spacing-sm;
+                
+                Text {
+                    text: "Scan your home directory for duplicate files to free up space.";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-sm;
+                }
+                
+                TweakButton {
+                    label: "Find Duplicates";
+                    clicked => { find-duplicates(); }
+                }
+            }
+        }
+        
+        Rectangle { vertical-stretch: 1; }
+    }
+}
+
+// Backup Tab Content
+component BackupTab inherits Rectangle {
+    in property <string> remote-name: "Not configured";
+    in property <bool> is-configured: false;
+    in property <[string]> queued-files: [];
+    in property <float> transfer-progress: 0;
+    in property <bool> is-transferring: false;
+    callback configure-rclone;
+    callback select-files;
+    callback start-sync;
+    
+    background: Theme.background;
+    
+    VerticalLayout {
+        padding: Theme.spacing-lg;
+        spacing: Theme.spacing-lg;
+        
+        // Header
+        Text {
+            text: "Backup (Rclone)";
+            font-size: Theme.font-xxl;
+            font-weight: 700;
+            color: Theme.text-primary;
+        }
+        
+        // Remote configuration
+        Card {
+            title: "Remote Configuration";
+            
+            VerticalLayout {
+                spacing: Theme.spacing-md;
+                
+                HorizontalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    Text {
+                        text: "Current Remote:";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-md;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: remote-name;
+                        color: is-configured ? Theme.success : Theme.warning;
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+                
+                TweakButton {
+                    label: is-configured ? "Change Remote" : "Configure Remote";
+                    clicked => { configure-rclone(); }
+                }
+            }
+        }
+        
+        // File selection
+        Card {
+            title: "Files to Backup";
+            
+            VerticalLayout {
+                spacing: Theme.spacing-md;
+                
+                if queued-files.length == 0 : Text {
+                    text: "No files selected. Click below to choose files.";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-sm;
+                }
+                
+                TweakButton {
+                    label: "Select Files...";
+                    enabled: is-configured && !is-transferring;
+                    clicked => { select-files(); }
+                }
+            }
+        }
+        
+        // Transfer
+        if is-configured : Card {
+            title: "Transfer";
+            
+            VerticalLayout {
+                spacing: Theme.spacing-md;
+                
+                if is-transferring : ProgressBar {
+                    progress: transfer-progress;
+                    label: "Uploading...";
+                }
+                
+                TweakButton {
+                    label: is-transferring ? "Syncing..." : "Start Sync";
+                    primary: true;
+                    enabled: is-configured && queued-files.length > 0 && !is-transferring;
+                    clicked => { start-sync(); }
+                }
+            }
+        }
+        
+        Rectangle { vertical-stretch: 1; }
+    }
+}
+
+// Benchmark Tab Content
+component BenchmarkTab inherits Rectangle {
+    in property <float> cpu-single-score: 0;
+    in property <float> cpu-multi-score: 0;
+    in property <float> memory-score: 0;
+    in property <float> disk-seq-score: 0;
+    in property <float> disk-rand-score: 0;
+    in property <bool> is-running: false;
+    in property <string> current-test: "";
+    in property <bool> sysbench-installed: false;
+    in property <bool> fio-installed: false;
+    callback run-all;
+    callback run-cpu-single;
+    callback run-cpu-multi;
+    callback run-memory;
+    callback run-disk;
+    
+    background: Theme.background;
+    
+    VerticalLayout {
+        padding: Theme.spacing-lg;
+        spacing: Theme.spacing-lg;
+        
+        // Header
+        HorizontalLayout {
+            Text {
+                text: "System Benchmarks";
+                font-size: Theme.font-xxl;
+                font-weight: 700;
+                color: Theme.text-primary;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            TweakButton {
+                label: is-running ? "Running..." : "Run All Benchmarks";
+                primary: true;
+                enabled: !is-running && sysbench-installed && fio-installed;
+                clicked => { run-all(); }
+            }
+
+        }
+        
+        if is-running : Card {
+            ProgressBar {
+                progress: 0.5;
+                label: "Running: " + current-test;
+            }
+        }
+        
+        // Results
+        HorizontalLayout {
+            spacing: Theme.spacing-lg;
+            
+            // CPU Benchmarks
+            Card {
+                title: "CPU";
+                horizontal-stretch: 1;
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    VerticalLayout {
+                        Text {
+                            text: "Single-Core";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                        }
+                        Text {
+                            text: cpu-single-score > 0 ? round(cpu-single-score) + " events/s" : "—";
+                            color: Theme.accent;
+                            font-size: Theme.font-lg;
+                            font-weight: 600;
+                        }
+                        TweakButton {
+                            label: "Run";
+                            enabled: !is-running;
+                            clicked => { run-cpu-single(); }
+                        }
+                    }
+                    
+                    VerticalLayout {
+                        Text {
+                            text: "Multi-Core";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                        }
+                        Text {
+                            text: cpu-multi-score > 0 ? round(cpu-multi-score) + " events/s" : "—";
+                            color: Theme.accent;
+                            font-size: Theme.font-lg;
+                            font-weight: 600;
+                        }
+                        TweakButton {
+                            label: "Run";
+                            enabled: !is-running;
+                            clicked => { run-cpu-multi(); }
+                        }
+                    }
+                }
+            }
+            
+            // Memory Benchmark
+            Card {
+                title: "Memory";
+                horizontal-stretch: 1;
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    Text {
+                        text: "Bandwidth";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                    }
+                    Text {
+                        text: memory-score > 0 ? round(memory-score) + " MB/s" : "—";
+                        color: Theme.accent;
+                        font-size: Theme.font-lg;
+                        font-weight: 600;
+                    }
+                    TweakButton {
+                        label: "Run";
+                        enabled: !is-running;
+                        clicked => { run-memory(); }
+                    }
+                }
+            }
+            
+            // Disk Benchmark
+            Card {
+                title: "Disk (NVMe)";
+                horizontal-stretch: 1;
+                
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    VerticalLayout {
+                        Text {
+                            text: "Sequential Read";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                        }
+                        Text {
+                            text: disk-seq-score > 0 ? round(disk-seq-score) + " MB/s" : "—";
+                            color: Theme.accent;
+                            font-size: Theme.font-lg;
+                            font-weight: 600;
+                        }
+                    }
+                    
+                    VerticalLayout {
+                        Text {
+                            text: "Random Read";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                        }
+                        Text {
+                            text: disk-rand-score > 0 ? round(disk-rand-score) + " IOPS" : "—";
+                            color: Theme.accent;
+                            font-size: Theme.font-lg;
+                            font-weight: 600;
+                        }
+                    }
+                    
+                    TweakButton {
+                        label: "Run";
+                        enabled: !is-running;
+                        clicked => { run-disk(); }
+                    }
+                }
+            }
+        }
+        
+        Rectangle { vertical-stretch: 1; }
+    }
+}
+
+// Main Application Window
+export component MainWindow inherits Window {
+    title: "Tweakers";
+    icon: @image-url("");
+    min-width: 1200px;
+    min-height: 800px;
+    background: Theme.background;
+    
+    in-out property <int> active-tab: 0;
+    in-out property <bool> show-sudo-dialog: false;
+    in-out property <string> sudo-password: "";
+    in-out property <bool> sudo-loading: false;
+    in-out property <string> sudo-error: "";
+    in-out property <string> sudo-action: "";
+    
+    // Tweaks tab properties
+    in-out property <int> cpu-governor-index: 1;
+    in-out property <bool> turbo-enabled: true;
+    in-out property <float> swappiness: 60;
+    in-out property <float> vfs-cache-pressure: 100;
+    in-out property <bool> zram-enabled: false;
+    in-out property <int> io-scheduler-index: 1;
+    in-out property <bool> trim-enabled: true;
+    in-out property <bool> intel-guc-enabled: false;
+    in-out property <bool> intel-psr-enabled: false;
+    in-out property <bool> intel-fbc-enabled: false;
+    in-out property <bool> wifi-powersave: false;
+    in-out property <bool> audio-powersave: false;
+    
+    // Network
+    in-out property <float> tcp-fastopen: 3;
+    in-out property <bool> tcp-low-latency: false;
+    in-out property <bool> bbr-enabled: false;
+    
+    // Kernel
+    in-out property <bool> watchdog-enabled: true;
+    in-out property <int> thp-index: 1;
+    
+    // Cleaner tab properties
+    in-out property <float> apt-cache-size: 0;
+    in-out property <float> thumbnail-cache-size: 0;
+    in-out property <float> journal-size: 0;
+    in-out property <float> temp-size: 0;
+    in-out property <int> orphan-packages: 0;
+    in-out property <bool> is-scanning: false;
+    in-out property <bool> is-cleaning: false;
+    
+    // Cleaner selection
+    in-out property <bool> apt-cache-selected: true;
+    in-out property <bool> thumbnail-selected: true;
+    in-out property <bool> journal-selected: false;
+    in-out property <bool> temp-selected: true;
+    in-out property <bool> orphan-selected: false;
+    
+    // Backup tab properties
+    in-out property <string> remote-name: "Not configured";
+    in-out property <bool> is-configured: false;
+    in-out property <float> transfer-progress: 0;
+    in-out property <bool> is-transferring: false;
+    
+    // Benchmark tab properties
+    in-out property <float> cpu-single-score: 0;
+    in-out property <float> cpu-multi-score: 0;
+    in-out property <float> memory-score: 0;
+    in-out property <float> disk-seq-score: 0;
+    in-out property <float> disk-rand-score: 0;
+    in-out property <bool> is-running: false;
+    in-out property <string> current-test: "";
+    in-out property <bool> sysbench-installed: false;
+    in-out property <bool> fio-installed: false;
+    
+    // Callbacks to Rust backend
+    callback apply-tweaks;
+    callback reset-defaults;
+    callback scan-cleaner;
+    callback clean-selected;
+    callback find-duplicates;
+    callback configure-rclone;
+    callback select-backup-files;
+    callback start-backup;
+    callback run-benchmark(string);
+    callback set-profile(string);
+    callback sudo-authenticate(string);
+    callback sudo-cancel;
+    
+    HorizontalLayout {
+        // Sidebar
+        Rectangle {
+            width: 220px;
+            background: Theme.surface;
+            
+            VerticalLayout {
+                padding: Theme.spacing-md;
+                spacing: Theme.spacing-sm;
+                
+                // Logo/Title
+                HorizontalLayout {
+                    padding: Theme.spacing-md;
+                    spacing: Theme.spacing-sm;
+                    
+                    Text {
+                        text: "⚡";
+                        font-size: Theme.font-xxl;
+                    }
+                    Text {
+                        text: "Tweakers";
+                        font-size: Theme.font-xl;
+                        font-weight: 700;
+                        color: Theme.primary;
+                        vertical-alignment: center;
+                    }
+                }
+                
+                Rectangle { height: Theme.spacing-lg; }
+                
+                NavItem {
+                    icon: "🔧";
+                    label: "Tweaks";
+                    active: active-tab == 0;
+                    clicked => { active-tab = 0; }
+                }
+                
+                NavItem {
+                    icon: "🧹";
+                    label: "Cleaner";
+                    active: active-tab == 1;
+                    clicked => { active-tab = 1; }
+                }
+                
+                NavItem {
+                    icon: "☁️";
+                    label: "Backup";
+                    active: active-tab == 2;
+                    clicked => { active-tab = 2; }
+                }
+                
+                NavItem {
+                    icon: "📊";
+                    label: "Benchmark";
+                    active: active-tab == 3;
+                    clicked => { active-tab = 3; }
+                }
+                
+                Rectangle { vertical-stretch: 1; }
+                
+                // Version info
+                Text {
+                    text: "v0.1.0";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-xs;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+        
+        // Main content area
+        Rectangle {
+            horizontal-stretch: 1;
+            
+            if active-tab == 0 : TweaksTab {
+                cpu-governor-index <=> cpu-governor-index;
+                turbo-enabled <=> turbo-enabled;
+                swappiness <=> swappiness;
+                vfs-cache-pressure <=> vfs-cache-pressure;
+                zram-enabled <=> zram-enabled;
+                io-scheduler-index <=> io-scheduler-index;
+                trim-enabled <=> trim-enabled;
+                intel-guc-enabled <=> intel-guc-enabled;
+                intel-psr-enabled <=> intel-psr-enabled;
+                intel-fbc-enabled <=> intel-fbc-enabled;
+                wifi-powersave <=> wifi-powersave;
+                audio-powersave <=> audio-powersave;
+                tcp-fastopen <=> tcp-fastopen;
+                tcp-low-latency <=> tcp-low-latency;
+                bbr-enabled <=> bbr-enabled;
+                watchdog-enabled <=> watchdog-enabled;
+                thp-index <=> thp-index;
+                
+                apply-tweaks => {
+                    apply-tweaks();
+                }
+                reset-defaults => {
+                    reset-defaults();
+                }
+                set-profile(p) => {
+                    set-profile(p);
+                }
+            }
+            
+            if active-tab == 1 : CleanerTab {
+                apt-cache-size: apt-cache-size;
+                thumbnail-cache-size: thumbnail-cache-size;
+                journal-size: journal-size;
+                temp-size: temp-size;
+                orphan-packages: orphan-packages;
+                is-scanning: is-scanning;
+                is-cleaning: is-cleaning;
+                
+                apt-cache-selected <=> apt-cache-selected;
+                thumbnail-selected <=> thumbnail-selected;
+                journal-selected <=> journal-selected;
+                temp-selected <=> temp-selected;
+                orphan-selected <=> orphan-selected;
+                
+                scan => { scan-cleaner(); }
+                clean => { clean-selected(); }
+                find-duplicates => { find-duplicates(); }
+            }
+            
+            if active-tab == 2 : BackupTab {
+                remote-name: remote-name;
+                is-configured: is-configured;
+                transfer-progress: transfer-progress;
+                is-transferring: is-transferring;
+                
+                configure-rclone => { configure-rclone(); }
+                select-files => { select-backup-files(); }
+                start-sync => { start-backup(); }
+            }
+            
+            if active-tab == 3 : BenchmarkTab {
+                cpu-single-score: cpu-single-score;
+                cpu-multi-score: cpu-multi-score;
+                memory-score: memory-score;
+                disk-seq-score: disk-seq-score;
+                disk-rand-score: disk-rand-score;
+                is-running: is-running;
+                current-test: current-test;
+                sysbench-installed: sysbench-installed;
+                fio-installed: fio-installed;
+                
+                run-all => { run-benchmark("all"); }
+                run-cpu-single => { run-benchmark("cpu-single"); }
+                run-cpu-multi => { run-benchmark("cpu-multi"); }
+                run-memory => { run-benchmark("memory"); }
+                run-disk => { run-benchmark("disk"); }
+            }
+        }
+    }
+    
+    // Sudo dialog overlay
+    if show-sudo-dialog : SudoDialog {
+        dialog-visible: true;
+        action-description: sudo-action;
+        password <=> sudo-password;
+        is-loading: sudo-loading;
+        error-message: sudo-error;
+        submit(pwd) => {
+            sudo-authenticate(pwd);
+        }
+        cancel => {
+            show-sudo-dialog = false;
+            sudo-password = "";
+            sudo-error = "";
+            sudo-cancel();
+        }
+    }
+}

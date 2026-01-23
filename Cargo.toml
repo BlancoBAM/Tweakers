@@ -1,0 +1,31 @@
+[package]
+name = "tweakers"
+version = "0.1.0"
+edition = "2021"
+description = "System optimization GUI for Linux"
+authors = ["Tweakers Team"]
+
+[dependencies]
+slint = "1.5"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+which = "5"
+sysinfo = "0.29"
+walkdir = "2"
+sha2 = "0.10"
+regex = "1"
+num_cpus = "1.16"
+
+[build-dependencies]
+slint-build = "1.5"
+
+[[bin]]
+name = "tweakers"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
