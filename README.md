@@ -1,6 +1,6 @@
 # Tweakers ⚡
 
-A high-performance system optimization and utility tool for Ubuntu/COSMIC DE, built with Rust and Slint.
+A high-performance system optimization and utility tool for Lilith Linux, built with Rust and Slint.
 
 ![Tweakers UI Preview](https://via.placeholder.com/1200x800.png?text=Tweakers+GUI+Preview)
 
