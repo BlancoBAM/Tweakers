@@ -4,6 +4,19 @@ A high-performance system optimization and utility tool for Lilith Linux, built 
 
 ![Tweakers UI Preview](https://via.placeholder.com/1200x800.png?text=Tweakers+GUI+Preview)
 
+## Lilith Linux Integration
+
+Tweakers is an official system utility for **Lilith Linux**, providing comprehensive system optimization and maintenance tools.
+
+### Part of Lilith Linux
+
+| Component | Purpose |
+|-----------|---------|
+| **COSMIC Desktop** | Desktop Environment |
+| **Tweakers** | System Optimization |
+| **Shapeshifter** | Profile Manager |
+| **Lilim** | AI Assistant |
+
 ## Features
 
 ### 🔧 System Tweaks
@@ -36,6 +49,17 @@ Test system performance before and after tweaks:
 - Disk Sequential and Random I/O (requires `sysbench` and `fio`).
 
 ## Installation
+
+### Lilith Linux (Recommended)
+
+Tweakers comes pre-installed on Lilith Linux. To reinstall or update:
+
+```bash
+sudo apt update
+sudo apt install lilith-tweakers
+```
+
+### From Source
 
 ### Prerequisites
 - Rust (latest stable)
