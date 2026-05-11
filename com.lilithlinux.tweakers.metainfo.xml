@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.lilithlinux.tweakers</id>
+  <name>Tweakers</name>
+  <summary>System Optimization Tool for Lilith Linux</summary>
+  <description>
+    <p>A high-performance system optimization and utility tool for Lilith Linux, providing comprehensive system optimization and maintenance tools.</p>
+    <ul>
+      <li>CPU, memory, storage, GPU, network, and kernel tuning</li>
+      <li>System cleaner for caches, temporary files, and orphans</li>
+      <li>Rclone-based backup integration</li>
+      <li>CPU, memory, and disk benchmarking suite</li>
+    </ul>
+  </description>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer_name>Lilith Linux Team</developer_name>
+  <url type="homepage">https://lilith-linux.org</url>
+  <url type="bugtracker">https://github.com/Lilith-Linux/Tweakers/issues</url>
+  <url type="donation">https://lilith-linux.org/donate</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://lilith-linux.org/screenshots/tweakers-main.png</image>
+      <caption>Main application window showing Tweaks tab</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="1.0.0" date="2025-01-01">
+      <description>
+        <p>Initial release with Lilith Linux integration.</p>
+        <ul>
+          <li>CPU governor, turbo boost, and frequency controls</li>
+          <li>Memory management including swappiness, ZRAM, and cache pressure</li>
+          <li>NVMe storage I/O scheduler tuning and TRIM management</li>
+          <li>Intel GPU firmware and power management controls</li>
+          <li>Network optimization including BBR and TCP Fast Open</li>
+          <li>Quick profiles for battery, balanced, performance, and presentation</li>
+          <li>System cleaning for APT cache, journal, thumbnails, and temp files</li>
+          <li>Duplicate file finder</li>
+          <li>Rclone backup integration</li>
+          <li>CPU, memory, and disk benchmarking suite</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <provides>
+    <binary>tweakers</binary>
+  </provides>
+  <kudos>
+    <kudo>HiDpiIcon</kudo>
+    <kudo>ModernToolkit</kudo>
+    <kudo>UserDocs</kudo>
+  </kudos>
+  <languages>
+    <lang>en</lang>
+  </languages>
+</component>

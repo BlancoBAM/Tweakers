@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# Remove configuration files on uninstall
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+    rm -f /etc/sysctl.d/99-tweakers.conf
+    rm -f /etc/modprobe.d/tweakers-i915.conf
+fi
+
+exit 0

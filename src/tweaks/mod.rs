@@ -8,32 +8,31 @@ pub mod kernel;
 
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use tokio::fs;
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
 pub struct TweakSettings {
     // CPU
-    pub cpu_governor: String, // powersave, schedutil, performance
+    pub cpu_governor: String,          // powersave, schedutil, performance
     pub turbo_enabled: bool,
-    
+
     // Memory
     pub swappiness: u32,
     pub vfs_cache_pressure: u32,
-    pub zram_enabled: bool,
     pub dirty_ratio: u32,
     pub dirty_background_ratio: u32,
-    
+    pub zram_enabled: bool,
+
     // Storage
-    pub io_scheduler: String, // none, mq-deadline, kyber
+    pub io_scheduler: String,          // none, mq-deadline, kyber
     pub trim_enabled: bool,
     pub noatime: bool,
-    
+
     // GPU (Intel)
     pub intel_guc: bool,
     pub intel_psr: bool,
     pub intel_fbc: bool,
     pub intel_rc6: bool,
-    
+
     // Power
     pub wifi_powersave: bool,
     pub audio_powersave: bool,
@@ -49,103 +48,94 @@ pub struct TweakSettings {
     pub transparent_hugepages: String, // always, madvise, never
 }
 
-/// Load current system settings
+/// Load current system settings by reading from sysfs/proc/sys
 pub async fn load_current_settings() -> TweakSettings {
+    // Use submodule functions where available
+    let cpu_governor = cpu::read_governor()
+        .await
+        .unwrap_or_else(|_| "schedutil".into());
+
+    let turbo_enabled = !cpu::read_turbo_disabled()
+        .await
+        .unwrap_or(false);
+
+    let swappiness = memory::read_swappiness()
+        .await
+        .unwrap_or(60);
+
+    let vfs_cache_pressure = memory::read_vfs_cache_pressure()
+        .await
+        .unwrap_or(100);
+
+    let dirty_ratio = memory::read_dirty_ratio()
+        .await
+        .unwrap_or(20);
+
+    let dirty_background_ratio = memory::read_dirty_background_ratio()
+        .await
+        .unwrap_or(10);
+
+    let zram_enabled = memory::check_zram_enabled().await;
+
+    let io_scheduler = storage::read_io_scheduler()
+        .await
+        .unwrap_or_else(|_| "mq-deadline".into());
+
+    let trim_enabled = storage::check_fstrim_timer().await;
+    let noatime = storage::check_noatime().await;
+
+    let intel_guc = gpu::read_intel_guc().await;
+    let intel_psr = gpu::read_intel_psr().await;
+    let intel_fbc = gpu::read_intel_fbc().await;
+    let intel_rc6 = gpu::read_intel_rc6().await;
+
+    let wifi_powersave = power::check_wifi_powersave().await;
+    let audio_powersave = power::check_audio_powersave().await;
+    let pcie_aspm = power::read_pcie_aspm().await.unwrap_or_else(|_| "default".into());
+
+    let tcp_fastopen = network::read_tcp_fastopen()
+        .await
+        .unwrap_or(3);
+
+    let tcp_low_latency = network::read_tcp_low_latency()
+        .await
+        .unwrap_or(false);
+
+    let bbr_enabled = network::check_bbr().await;
+
+    let watchdog_enabled = kernel::read_watchdog()
+        .await
+        .map(|v| v == 1)
+        .unwrap_or(true);
+
+    let transparent_hugepages = kernel::read_thp()
+        .await
+        .unwrap_or_else(|_| "madvise".into());
+
     TweakSettings {
-        cpu_governor: read_cpu_governor().await.unwrap_or_else(|_| "schedutil".into()),
-        turbo_enabled: !read_turbo_disabled().await.unwrap_or(false),
-        swappiness: read_sysctl("vm.swappiness").await.unwrap_or(60),
-        vfs_cache_pressure: read_sysctl("vm.vfs_cache_pressure").await.unwrap_or(100),
-        zram_enabled: check_zram_enabled().await,
-        dirty_ratio: read_sysctl("vm.dirty_ratio").await.unwrap_or(20),
-        dirty_background_ratio: read_sysctl("vm.dirty_background_ratio").await.unwrap_or(10),
-        io_scheduler: read_io_scheduler().await.unwrap_or_else(|_| "mq-deadline".into()),
-        trim_enabled: check_fstrim_timer().await,
-        noatime: check_noatime().await,
-        intel_guc: false, // Requires parsing modprobe conf
-        intel_psr: false,
-        intel_fbc: false,
-        intel_rc6: false,
-        wifi_powersave: check_wifi_powersave().await,
-        audio_powersave: check_audio_powersave().await,
-        pcie_aspm: "default".into(),
-        tcp_fastopen: read_sysctl("net.ipv4.tcp_fastopen").await.unwrap_or(3),
-        tcp_low_latency: read_sysctl("net.ipv4.tcp_low_latency").await.unwrap_or(0) == 1,
-        bbr_enabled: check_bbr().await,
-        watchdog_enabled: read_sysctl("kernel.watchdog").await.unwrap_or(1) == 1,
-        transparent_hugepages: read_thp().await.unwrap_or_else(|_| "madvise".into()),
+        cpu_governor,
+        turbo_enabled,
+        swappiness,
+        vfs_cache_pressure,
+        dirty_ratio,
+        dirty_background_ratio,
+        zram_enabled,
+        io_scheduler,
+        trim_enabled,
+        noatime,
+        intel_guc,
+        intel_psr,
+        intel_fbc,
+        intel_rc6,
+        wifi_powersave,
+        audio_powersave,
+        pcie_aspm,
+        tcp_fastopen,
+        tcp_low_latency,
+        bbr_enabled,
+        watchdog_enabled,
+        transparent_hugepages,
     }
-}
-
-/// Read CPU governor from sysfs
-async fn read_cpu_governor() -> Result<String, std::io::Error> {
-    fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
-        .await
-        .map(|s| s.trim().to_string())
-}
-
-/// Check if turbo is disabled
-async fn read_turbo_disabled() -> Result<bool, std::io::Error> {
-    let content = fs::read_to_string("/sys/devices/system/cpu/intel_pstate/no_turbo").await?;
-    Ok(content.trim() == "1")
-}
-
-/// Read a sysctl value
-async fn read_sysctl(key: &str) -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
-    let path = format!("/proc/sys/{}", key.replace('.', "/"));
-    let content = fs::read_to_string(&path).await?;
-    Ok(content.trim().parse()?)
-}
-
-/// Check if ZRAM is enabled
-async fn check_zram_enabled() -> bool {
-    fs::metadata("/dev/zram0").await.is_ok()
-}
-
-/// Read I/O scheduler for nvme0n1
-async fn read_io_scheduler() -> Result<String, std::io::Error> {
-    let content = fs::read_to_string("/sys/block/nvme0n1/queue/scheduler").await?;
-    // Format: "[none] mq-deadline kyber" - brackets indicate active
-    for part in content.split_whitespace() {
-        if part.starts_with('[') && part.ends_with(']') {
-            return Ok(part[1..part.len()-1].to_string());
-        }
-    }
-    Ok("mq-deadline".into())
-}
-
-/// Check if fstrim.timer is enabled
-async fn check_fstrim_timer() -> bool {
-    Command::new("systemctl")
-        .args(["is-enabled", "fstrim.timer"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-/// Check if noatime is set in fstab
-async fn check_noatime() -> bool {
-    fs::read_to_string("/etc/fstab")
-        .await
-        .map(|s| s.contains("noatime"))
-        .unwrap_or(false)
-}
-
-/// Check WiFi power save
-async fn check_wifi_powersave() -> bool {
-    Command::new("iwconfig")
-        .arg("wlo1")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("Power Management:on"))
-        .unwrap_or(false)
-}
-
-/// Check audio power save
-async fn check_audio_powersave() -> bool {
-    fs::read_to_string("/sys/module/snd_hda_intel/parameters/power_save")
-        .await
-        .map(|s| s.trim() != "0")
-        .unwrap_or(false)
 }
 
 /// Generate sysctl configuration file content
@@ -177,7 +167,7 @@ net.ipv4.tcp_fin_timeout = 10
         settings.dirty_background_ratio,
     );
 
-    // Network Optimizations
+    // Custom Network Optimizations
     config.push_str(&format!(
         r#"
 # Custom Network Optimizations
@@ -210,31 +200,10 @@ kernel.nmi_watchdog = {}
     config
 }
 
-/// Check if BBR is enabled
-async fn check_bbr() -> bool {
-    if let Ok(cc) = fs::read_to_string("/proc/sys/net/ipv4/tcp_congestion_control").await {
-        return cc.trim() == "bbr";
-    }
-    false
-}
-
-/// Read Transparent Huge Pages setting
-async fn read_thp() -> Result<String, std::io::Error> {
-    let content = fs::read_to_string("/sys/kernel/mm/transparent_hugepage/enabled").await?;
-    // Format: "always [madvise] never"
-    for part in content.split_whitespace() {
-        if part.starts_with('[') && part.ends_with(']') {
-            return Ok(part[1..part.len() - 1].to_string());
-        }
-    }
-    Ok("madvise".into())
-}
-
-
-/// Generate i915 modprobe config  
+/// Generate i915 modprobe config
 pub fn generate_i915_config(settings: &TweakSettings) -> String {
     let mut options = Vec::new();
-    
+
     if settings.intel_guc {
         options.push("enable_guc=2");
     }
@@ -247,10 +216,43 @@ pub fn generate_i915_config(settings: &TweakSettings) -> String {
     if settings.intel_rc6 {
         options.push("enable_rc6=1");
     }
-    
+
     if options.is_empty() {
         String::new()
     } else {
         format!("options i915 {}", options.join(" "))
     }
+}
+
+/// Reapply all current settings (used after reset)
+pub async fn reapply_settings(settings: &TweakSettings) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Apply sysctl
+    let sysctl_content = generate_sysctl_config(settings);
+    tokio::fs::write("/etc/sysctl.d/99-tweakers.conf", &sysctl_content).await?;
+
+    let output = Command::new("sysctl")
+        .args(["-p", "/etc/sysctl.d/99-tweakers.conf"])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("sysctl apply failed: {}", stderr).into());
+    }
+
+    // Apply i915 config (requires modprobe reload)
+    let i915_content = generate_i915_config(settings);
+    if !i915_content.is_empty() {
+        tokio::fs::write("/etc/modprobe.d/tweakers-i915.conf", &i915_content).await?;
+
+        Command::new("modprobe")
+            .args(["-r", "i915"])
+            .status()
+            .ok();
+        Command::new("modprobe")
+            .arg("i915")
+            .status()
+            .ok();
+    }
+
+    Ok(())
 }

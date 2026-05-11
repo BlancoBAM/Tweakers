@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+
+# Create required directories
+mkdir -p /etc/sysctl.d
+mkdir -p /etc/modprobe.d
+
+# Set proper permissions on Tweakers binary
+if [ -x /usr/bin/tweakers ]; then
+    chmod 4755 /usr/bin/tweakers 2>/dev/null || true
+fi
+
+# Update desktop database
+if [ -x /usr/bin/update-desktop-database ]; then
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+fi
+
+# Update icon cache
+if [ -x /usr/bin/gtk-update-icon-cache ]; then
+    gtk-update-icon-cache /usr/share/icons/hicolor 2>/dev/null || true
+fi
+
+echo "Tweakers installed successfully. Run 'tweakers' from the terminal or find it in your application menu."
+
+exit 0

@@ -1,0 +1,16 @@
+[Desktop Entry]
+Name=Tweakers
+Comment=System Optimization Tool for Lilith Linux
+Exec=tweakers
+Icon=tweakers
+Terminal=false
+Type=Application
+Categories=System;Settings;Utility;
+Keywords=system;optimization;tweaks;performance;memory;cpu;benchmark;
+StartupNotify=true
+MimeType=
+Actions=Launch;
+
+[Desktop Action Launch]
+Name=Launch Tweakers
+Exec=tweakers
