@@ -1,4 +1,13 @@
 /target
 **/*.rs.bk
-Cargo.lock
+*.o
+*.d
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
 anti.txt
+*.log
+tmp/
