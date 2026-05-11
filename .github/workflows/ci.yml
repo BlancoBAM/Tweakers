@@ -13,12 +13,12 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
+    
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential pkg-config libslint-dev
-
+        sudo apt-get install -y build-essential pkg-config libxcb-dev libwayland-dev libxkbcommon-dev
+    
     - name: Build
       run: cargo build --release
 
@@ -36,12 +36,12 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-
+    
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential pkg-config libslint-dev
-
+        sudo apt-get install -y build-essential pkg-config libxcb-dev libwayland-dev libxkbcommon-dev
+    
     - name: Build
       run: cargo build --release
 
