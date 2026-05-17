@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Read swappiness value (0-100, default 60)
 pub async fn read_swappiness() -> Result<u32, Box<dyn std::error::Error + Send + Sync>> {
     let value = read_sysctl_value("vm.swappiness").await?;

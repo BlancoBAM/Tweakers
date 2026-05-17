@@ -90,6 +90,7 @@ impl ScanMode {
     }
 
     /// Icon/emoji for this mode.
+    #[allow(dead_code)]
     pub fn icon(&self) -> &str {
         match self {
             ScanMode::DuplicateFiles => "📄",
@@ -221,6 +222,7 @@ pub fn install_hint() -> String {
 }
 
 /// All available scan modes as a list, matching the krokiet sidebar order.
+#[allow(dead_code)]
 pub fn all_scan_modes() -> Vec<ScanMode> {
     vec![
         ScanMode::DuplicateFiles,

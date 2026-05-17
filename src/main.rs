@@ -204,7 +204,7 @@ fn setup_tweak_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 
     let app_weak = app.as_weak();
-    let state_clone2 = state.clone();
+    let _state_clone2 = state.clone();
     let _state_clone = state.clone();
 
     app.on_reset_defaults(move || {
@@ -548,11 +548,10 @@ fn setup_backup_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
         }
     });
 
-    let app_weak2 = app.as_weak();
+    let _app_weak2 = app.as_weak();
     let state_clone = state.clone();
 
     app.on_select_backup_files(move || {
-        let app_weak = app_weak2.clone();
         let state = state_clone.clone();
 
         tokio::spawn(async move {

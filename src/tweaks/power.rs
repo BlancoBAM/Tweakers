@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Power management tweaks module
 use std::path::Path;
 

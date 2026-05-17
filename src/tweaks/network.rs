@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Network tweaks module
 
 /// Check if BBR congestion control is enabled

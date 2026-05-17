@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Storage tweaks module
 use std::path::Path;
 

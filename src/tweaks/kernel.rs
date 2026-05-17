@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use tokio::fs;
 
 /// Read Transparent Huge Pages setting
