@@ -32,3 +32,16 @@ num_cpus = "1.16"
 futures = "0.3"
 log = "0.4"
 env_logger = "0.10"
+
+[package.metadata.deb]
+maintainer  = "Lilith Linux Team <team@lilith-linux.org>"
+copyright   = "2026, Lilith Linux Team"
+depends     = "rclone, sysbench, fio, fdupes, zenity, polkitd, $auto"
+section     = "admin"
+priority    = "optional"
+assets = [
+  ["target/release/tweakers",     "usr/bin/tweakers",                                            "755"],
+  ["tweakers.desktop",            "usr/share/applications/tweakers.desktop",                     "644"],
+  ["icon.svg",                    "usr/share/icons/hicolor/scalable/apps/tweakers.svg",          "644"],
+  ["com.lilithlinux.tweakers.metainfo.xml", "usr/share/metainfo/com.lilithlinux.tweakers.metainfo.xml", "644"]
+]

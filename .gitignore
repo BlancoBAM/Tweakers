@@ -11,3 +11,7 @@
 anti.txt
 *.log
 tmp/
+*.AppImage
+*.deb
+AppDir/
+dist/
