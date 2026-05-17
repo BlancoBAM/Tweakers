@@ -3,6 +3,7 @@ mod cleaners;
 mod backup;
 mod benchmark;
 mod sudo_handler;
+mod czkawka;
 
 use std::sync::Arc;
 use std::path::PathBuf;
@@ -18,6 +19,7 @@ pub struct AppState {
     pub benchmark: benchmark::BenchmarkResults,
     pub pending_action: PendingAction,
     pub askpass_path: String,
+    pub czkawka: czkawka::CzkawkaAvailability,
 }
 
 #[derive(Clone, Default, Debug, PartialEq)]
@@ -40,6 +42,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut s = state.lock().await;
         s.tweaks = tweaks::load_current_settings().await;
         s.askpass_path = String::new();
+
+        // Detect czkawka / krokiet availability
+        s.czkawka = czkawka::detect_tools();
+        log::info!(
+            "czkawka detection: krokiet={:?}, cli={:?}",
+            s.czkawka.krokiet_path,
+            s.czkawka.cli_path
+        );
 
         if backup::check_rclone_installed() {
             if let Ok(remotes) = backup::list_remotes() {
@@ -116,6 +126,21 @@ async fn initialize_ui(app: &MainWindow, state: &Arc<Mutex<AppState>>) {
         app.set_remote_name(remote.clone().into());
         app.set_is_configured(true);
     }
+
+    // czkawka / krokiet availability flags
+    let krokiet_avail = s.czkawka.krokiet_path.is_some();
+    let cli_avail = s.czkawka.cli_path.is_some();
+    app.set_krokiet_available(krokiet_avail);
+    app.set_czkawka_cli_available(cli_avail);
+    app.set_czkawka_status(
+        if krokiet_avail {
+            "krokiet found ✓".into()
+        } else if cli_avail {
+            "czkawka_cli found ✓ (install krokiet for GUI)".into()
+        } else {
+            "Not installed — install krokiet for full functionality".into()
+        }
+    );
 }
 
 fn setup_tweak_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
@@ -299,27 +324,221 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 
     let app_weak2 = app.as_weak();
+    let state_cz = state.clone();
 
+    // Legacy find-duplicates: now dispatches through czkawka integration
     app.on_find_duplicates(move || {
         let app_weak3 = app_weak2.clone();
+        let state = state_cz.clone();
 
         tokio::spawn(async move {
-            if let Some(home) = dirs::home_dir() {
-                match cleaners::find_duplicates(&home).await {
-                    Ok(groups) => {
-                        let total_dups: usize = groups.iter().map(|g| g.len().saturating_sub(1)).sum();
-                        log::info!("Found {} duplicate file groups ({} files can be removed)", groups.len(), total_dups);
-                        if let Some(app) = app_weak3.upgrade() {
-                            app.set_apt_cache_size(0.0);
-                        }
-                    }
+            let availability = {
+                let s = state.lock().await;
+                s.czkawka.clone()
+            };
+
+            if let Some(krokiet) = &availability.krokiet_path {
+                // Launch krokiet — it will show as a window focused on duplicate finder
+                match czkawka::launch_krokiet(krokiet, &czkawka::ScanMode::DuplicateFiles) {
+                    Ok(()) => log::info!("krokiet launched for duplicate scan"),
                     Err(e) => {
-                        log::error!("Duplicate scan failed: {}", e);
+                        log::error!("Failed to launch krokiet: {}", e);
+                        // Fall through to CLI
+                        run_cli_duplicate_scan(&app_weak3, &availability).await;
                     }
                 }
+            } else if availability.cli_path.is_some() {
+                run_cli_duplicate_scan(&app_weak3, &availability).await;
+            } else {
+                // Neither available — show install prompt
+                let hint = czkawka::install_hint();
+                log::warn!("{}", hint);
+                slint::invoke_from_event_loop(move || {
+                    if let Some(app) = app_weak3.upgrade() {
+                        app.set_czkawka_status(hint.replace('\n', " | ").into());
+                    }
+                }).ok();
             }
         });
     });
+
+    // New: per-mode launch callback — used by all the scan mode buttons in the UI
+    let app_weak_scan = app.as_weak();
+    let state_scan = state.clone();
+
+    app.on_launch_czkawka_scan(move |mode_str| {
+        let app_weak = app_weak_scan.clone();
+        let state = state_scan.clone();
+        let mode_str = mode_str.to_string();
+
+        tokio::spawn(async move {
+            let availability = {
+                let s = state.lock().await;
+                s.czkawka.clone()
+            };
+
+            let mode = parse_scan_mode(&mode_str);
+
+            if let Some(krokiet) = &availability.krokiet_path {
+                match czkawka::launch_krokiet(krokiet, &mode) {
+                    Ok(()) => {
+                        log::info!("krokiet launched for mode: {}", mode_str);
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(app) = app_weak.upgrade() {
+                                app.set_czkawka_status("krokiet opened ✓".into());
+                            }
+                        }).ok();
+                    }
+                    Err(e) => {
+                        let msg = format!("Launch failed: {}", e);
+                        log::error!("{}", msg);
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(app) = app_weak.upgrade() {
+                                app.set_czkawka_status(msg.into());
+                            }
+                        }).ok();
+                    }
+                }
+            } else if let Some(cli) = &availability.cli_path {
+                slint::invoke_from_event_loop({
+                    let app_weak = app_weak.clone();
+                    let mode_label = mode.label().to_string();
+                    move || {
+                        if let Some(app) = app_weak.upgrade() {
+                            app.set_czkawka_status(format!("Scanning: {}…", mode_label).into());
+                            app.set_is_czkawka_scanning(true);
+                        }
+                    }
+                }).ok();
+
+                let home = dirs::home_dir().unwrap_or_default();
+                match czkawka::run_cli_scan(cli, &mode, &[home]).await {
+                    Ok(groups) => {
+                        let count = groups.len();
+                        let total_files: usize = groups.iter().map(|g| g.files.len()).sum();
+                        let status = format!("Found {} groups ({} files) | {}", count, total_files, mode.label());
+                        log::info!("{}", status);
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(app) = app_weak.upgrade() {
+                                app.set_czkawka_status(status.into());
+                                app.set_czkawka_result_count(count as i32);
+                                app.set_is_czkawka_scanning(false);
+                            }
+                        }).ok();
+                    }
+                    Err(e) => {
+                        let msg = format!("Scan error: {}", e);
+                        log::error!("{}", msg);
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(app) = app_weak.upgrade() {
+                                app.set_czkawka_status(msg.into());
+                                app.set_is_czkawka_scanning(false);
+                            }
+                        }).ok();
+                    }
+                }
+            } else {
+                let hint = czkawka::install_hint();
+                slint::invoke_from_event_loop(move || {
+                    if let Some(app) = app_weak.upgrade() {
+                        app.set_czkawka_status(hint.replace('\n', " | ").into());
+                    }
+                }).ok();
+            }
+        });
+    });
+
+    // Install krokiet callback
+    let app_weak_install = app.as_weak();
+    app.on_install_krokiet(move || {
+        let app_weak = app_weak_install.clone();
+        tokio::spawn(async move {
+            slint::invoke_from_event_loop({
+                let app_weak = app_weak.clone();
+                move || {
+                    if let Some(app) = app_weak.upgrade() {
+                        app.set_czkawka_status("Installing krokiet via cargo… this may take a while".into());
+                        app.set_is_czkawka_scanning(true);
+                    }
+                }
+            }).ok();
+
+            let result = tokio::process::Command::new("cargo")
+                .args(["install", "krokiet", "--locked"])
+                .output()
+                .await;
+
+            let (status_msg, success) = match result {
+                Ok(out) if out.status.success() => (
+                    "krokiet installed successfully! ✓".to_string(),
+                    true,
+                ),
+                Ok(out) => (
+                    format!("Install failed: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("unknown error")),
+                    false,
+                ),
+                Err(e) => (format!("cargo not found: {}", e), false),
+            };
+
+            log::info!("{}", status_msg);
+            slint::invoke_from_event_loop(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.set_czkawka_status(status_msg.into());
+                    app.set_is_czkawka_scanning(false);
+                    if success {
+                        // Re-detect after install
+                        let avail = czkawka::detect_tools();
+                        app.set_krokiet_available(avail.krokiet_path.is_some());
+                        app.set_czkawka_cli_available(avail.cli_path.is_some());
+                    }
+                }
+            }).ok();
+        });
+    });
+}
+
+/// Helper: parse a mode string from the UI into a ScanMode enum.
+fn parse_scan_mode(s: &str) -> czkawka::ScanMode {
+    match s {
+        "dup" | "duplicates" => czkawka::ScanMode::DuplicateFiles,
+        "empty-files" => czkawka::ScanMode::EmptyFiles,
+        "empty-dirs" => czkawka::ScanMode::EmptyDirectories,
+        "similar-images" | "image" => czkawka::ScanMode::SimilarImages,
+        "similar-videos" | "video" => czkawka::ScanMode::SimilarVideos,
+        "same-music" | "music" => czkawka::ScanMode::SameMusic,
+        "symlinks" => czkawka::ScanMode::InvalidSymlinks,
+        "broken" => czkawka::ScanMode::BrokenFiles,
+        "bad-ext" | "ext" => czkawka::ScanMode::BadExtensions,
+        "big" => czkawka::ScanMode::BigFiles,
+        "temp" => czkawka::ScanMode::TemporaryFiles,
+        _ => czkawka::ScanMode::DuplicateFiles,
+    }
+}
+
+/// Helper: run a CLI duplicate scan and update app status.
+async fn run_cli_duplicate_scan(
+    app_weak: &slint::Weak<MainWindow>,
+    availability: &czkawka::CzkawkaAvailability,
+) {
+    if let Some(cli) = &availability.cli_path {
+        let home = dirs::home_dir().unwrap_or_default();
+        match czkawka::run_cli_scan(cli, &czkawka::ScanMode::DuplicateFiles, &[home]).await {
+            Ok(groups) => {
+                let count = groups.len();
+                let total: usize = groups.iter().map(|g| g.files.len()).sum();
+                let msg = format!("Found {} duplicate groups, {} files", count, total);
+                log::info!("{}", msg);
+                let app_weak = app_weak.clone();
+                slint::invoke_from_event_loop(move || {
+                    if let Some(app) = app_weak.upgrade() {
+                        app.set_czkawka_result_count(count as i32);
+                        app.set_czkawka_status(msg.into());
+                    }
+                }).ok();
+            }
+            Err(e) => log::error!("CLI scan error: {}", e),
+        }
+    }
 }
 
 fn setup_backup_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {

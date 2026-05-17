@@ -1,6 +1,83 @@
 // Tweakers - Main Application Window
 import { Theme, TweakButton, Card, ToggleSwitch, TweakSlider, TweakSelect, ProgressBar } from "theme.slint";
 
+// Czkawka scan mode button — styled to match krokiet's sidebar item look
+component CzkawkaModeButton inherits Rectangle {
+    in property <string> icon: "📄";
+    in property <string> label: "";
+    in property <string> description: "";
+    in property <bool> available: false;
+    in property <bool> scanning: false;
+    callback clicked;
+
+    height: 72px;
+    background: available ? Theme.surface-variant : #151515;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: touch.has-hover && available ? Theme.accent : Theme.border;
+    opacity: available ? 1.0 : 0.45;
+
+    animate border-color { duration: 120ms; }
+    animate background { duration: 120ms; }
+
+    states [
+        hovered when touch.has-hover && available && !scanning: {
+            background: #2d2d20;
+        }
+    ]
+
+    touch := TouchArea {
+        mouse-cursor: (available && !scanning) ? pointer : default;
+        clicked => {
+            if (available && !scanning) {
+                root.clicked();
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding: Theme.spacing-sm;
+        spacing: Theme.spacing-sm;
+
+        // Icon
+        Text {
+            text: icon;
+            font-size: 28px;
+            vertical-alignment: center;
+            width: 40px;
+        }
+
+        // Labels
+        VerticalLayout {
+            spacing: 2px;
+            alignment: center;
+
+            Text {
+                text: label;
+                color: available ? Theme.text-primary : Theme.text-muted;
+                font-size: Theme.font-sm;
+                font-weight: 600;
+            }
+            Text {
+                text: description;
+                color: Theme.text-muted;
+                font-size: Theme.font-xs;
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        // Arrow indicator
+        if available : Text {
+            text: scanning ? "⏳" : "›";
+            color: Theme.accent;
+            font-size: Theme.font-lg;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+}
+
 // Sidebar navigation item
 component NavItem inherits Rectangle {
     in property <string> label: "";
@@ -404,9 +481,16 @@ component CleanerTab inherits Rectangle {
     in-out property <bool> orphan-selected: false;
     in property <bool> is-scanning: false;
     in property <bool> is-cleaning: false;
+    in property <bool> krokiet-available: false;
+    in property <bool> czkawka-cli-available: false;
+    in property <string> czkawka-status: "Checking...";
+    in property <int> czkawka-result-count: 0;
+    in property <bool> is-czkawka-scanning: false;
     callback scan;
     callback clean;
     callback find-duplicates;
+    callback launch-czkawka-scan(string);
+    callback install-krokiet;
     
     background: Theme.background;
     
@@ -524,20 +608,194 @@ component CleanerTab inherits Rectangle {
         }
         
         Card {
-            title: "Duplicate Finder";
+            title: "🔍 File Analysis (powered by czkawka / krokiet)";
             
             VerticalLayout {
                 spacing: Theme.spacing-sm;
                 
-                Text {
-                    text: "Scan your home directory for duplicate files to free up space.";
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-sm;
+                // Status bar
+                Rectangle {
+                    height: 36px;
+                    background: krokiet-available ? #1a2e1a : (czkawka-cli-available ? #2e2a1a : #2a1a1a);
+                    border-radius: Theme.radius-md;
+                    border-width: 1px;
+                    border-color: krokiet-available ? #44ff44 : (czkawka-cli-available ? #ffaa00 : #ff4444);
+                    
+                    HorizontalLayout {
+                        padding-left: Theme.spacing-md;
+                        padding-right: Theme.spacing-md;
+                        spacing: Theme.spacing-sm;
+                        
+                        Text {
+                            text: krokiet-available ? "🟢" : (czkawka-cli-available ? "🟡" : "🔴");
+                            font-size: Theme.font-md;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: czkawka-status;
+                            color: krokiet-available ? #44ff44 : (czkawka-cli-available ? #ffaa00 : #ff8888);
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        if is-czkawka-scanning : Text {
+                            text: "⏳ Scanning...";
+                            color: Theme.accent;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                        if czkawka-result-count > 0 : Text {
+                            text: czkawka-result-count + " groups found";
+                            color: Theme.warning;
+                            font-size: Theme.font-sm;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
                 }
                 
-                TweakButton {
-                    label: "Find Duplicates";
-                    clicked => { find-duplicates(); }
+                // Description
+                Text {
+                    text: krokiet-available
+                        ? "Click any scan mode below to open krokiet — a powerful file analysis tool with a full GUI."
+                        : (czkawka-cli-available
+                            ? "czkawka_cli is available for headless scans. Install krokiet for the full GUI experience."
+                            : "Install krokiet to enable all file analysis features.");
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-sm;
+                    wrap: word-wrap;
+                }
+                
+                // Grid of scan mode buttons — mirroring krokiet's sidebar order
+                HorizontalLayout {
+                    spacing: Theme.spacing-sm;
+                    
+                    // Column 1
+                    VerticalLayout {
+                        spacing: Theme.spacing-xs;
+                        horizontal-stretch: 1;
+                        
+                        CzkawkaModeButton {
+                            icon: "📄";
+                            label: "Duplicate Files";
+                            description: "Find exact copy files";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("dup"); }
+                        }
+                        CzkawkaModeButton {
+                            icon: "📭";
+                            label: "Empty Files";
+                            description: "Zero-byte files";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("empty-files"); }
+                        }
+                        CzkawkaModeButton {
+                            icon: "📂";
+                            label: "Empty Directories";
+                            description: "Unused empty folders";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("empty-dirs"); }
+                        }
+                        CzkawkaModeButton {
+                            icon: "🖼";
+                            label: "Similar Images";
+                            description: "Visually similar photos";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("similar-images"); }
+                        }
+                    }
+                    
+                    // Column 2
+                    VerticalLayout {
+                        spacing: Theme.spacing-xs;
+                        horizontal-stretch: 1;
+                        
+                        CzkawkaModeButton {
+                            icon: "🎬";
+                            label: "Similar Videos";
+                            description: "Near-duplicate clips";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("similar-videos"); }
+                        }
+                        CzkawkaModeButton {
+                            icon: "🎵";
+                            label: "Same Music";
+                            description: "Duplicate audio tracks";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("same-music"); }
+                        }
+                        CzkawkaModeButton {
+                            icon: "🔗";
+                            label: "Invalid Symlinks";
+                            description: "Broken symbolic links";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("symlinks"); }
+                        }
+                        CzkawkaModeButton {
+                            icon: "💔";
+                            label: "Broken Files";
+                            description: "Corrupted archives/ZIPs";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("broken"); }
+                        }
+                    }
+                    
+                    // Column 3
+                    VerticalLayout {
+                        spacing: Theme.spacing-xs;
+                        horizontal-stretch: 1;
+                        
+                        CzkawkaModeButton {
+                            icon: "🏷";
+                            label: "Bad Extensions";
+                            description: "Wrong file extensions";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("bad-ext"); }
+                        }
+                        CzkawkaModeButton {
+                            icon: "📦";
+                            label: "Big Files";
+                            description: "Largest files on disk";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("big"); }
+                        }
+                        CzkawkaModeButton {
+                            icon: "🗑";
+                            label: "Temporary Files";
+                            description: "Junk & temp files";
+                            available: krokiet-available || czkawka-cli-available;
+                            scanning: is-czkawka-scanning;
+                            clicked => { launch-czkawka-scan("temp"); }
+                        }
+                        
+                        // Install button (shown when neither tool is found)
+                        if !krokiet-available && !czkawka-cli-available : TweakButton {
+                            label: "⬇ Install krokiet";
+                            primary: true;
+                            enabled: !is-czkawka-scanning;
+                            clicked => { install-krokiet(); }
+                        }
+                    }
+                }
+                
+                // Attribution note
+                Text {
+                    text: krokiet-available
+                        ? "Powered by krokiet (Czkawka) — MIT license — github.com/qarmin/czkawka"
+                        : "krokiet — install via: cargo install krokiet --locked";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-xs;
+                    horizontal-alignment: right;
                 }
             }
         }
@@ -909,6 +1167,15 @@ export component MainWindow inherits Window {
     callback set-profile(string);
     callback sudo-authenticate(string);
     callback sudo-cancel;
+    callback launch-czkawka-scan(string);
+    callback install-krokiet;
+    
+    // czkawka / krokiet state
+    in-out property <bool> krokiet-available: false;
+    in-out property <bool> czkawka-cli-available: false;
+    in-out property <string> czkawka-status: "Checking...";
+    in-out property <int> czkawka-result-count: 0;
+    in-out property <bool> is-czkawka-scanning: false;
     
     HorizontalLayout {
         // Sidebar
@@ -1023,6 +1290,13 @@ export component MainWindow inherits Window {
                 is-scanning: is-scanning;
                 is-cleaning: is-cleaning;
                 
+                // czkawka pass-through
+                krokiet-available: krokiet-available;
+                czkawka-cli-available: czkawka-cli-available;
+                czkawka-status: czkawka-status;
+                czkawka-result-count: czkawka-result-count;
+                is-czkawka-scanning: is-czkawka-scanning;
+                
                 apt-cache-selected <=> apt-cache-selected;
                 thumbnail-selected <=> thumbnail-selected;
                 journal-selected <=> journal-selected;
@@ -1032,6 +1306,8 @@ export component MainWindow inherits Window {
                 scan => { scan-cleaner(); }
                 clean => { clean-selected(); }
                 find-duplicates => { find-duplicates(); }
+                launch-czkawka-scan(mode) => { launch-czkawka-scan(mode); }
+                install-krokiet => { install-krokiet(); }
             }
             
             if active-tab == 2 : BackupTab {
