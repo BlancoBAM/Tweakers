@@ -25,8 +25,7 @@ jobs:
         sudo apt-get install -y \
           build-essential pkg-config libssl-dev \
           libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-          libgtk-3-dev libwebp-dev \
-          librsvg2-bin patchelf file wget
+          libgtk-3-dev libwebp-dev
 
     - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
@@ -50,80 +49,24 @@ jobs:
     - name: Build .deb package
       run: cargo deb
 
-    # ── AppImage ────────────────────────────────────────────────────────────
-    # We skip linuxdeploy (fragile AppImage-in-AppImage extraction) and use
-    # appimagetool directly with APPIMAGE_EXTRACT_AND_RUN=1 so no FUSE needed.
-    - name: Download appimagetool
-      run: |
-        wget -q \
-          "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" \
-          -O /usr/local/bin/appimagetool
-        chmod +x /usr/local/bin/appimagetool
-
-    - name: Assemble AppDir
-      run: |
-        APPDIR="AppDir"
-        rm -rf "$APPDIR"
-        mkdir -p \
-          "$APPDIR/usr/bin" \
-          "$APPDIR/usr/share/applications" \
-          "$APPDIR/usr/share/icons/hicolor/scalable/apps" \
-          "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
-          "$APPDIR/usr/share/metainfo"
-
-        # Binary
-        cp target/release/tweakers "$APPDIR/usr/bin/tweakers"
-
-        # Desktop entry
-        cp tweakers.desktop "$APPDIR/usr/share/applications/tweakers.desktop"
-
-        # AppRun symlink (required by AppImage spec)
-        ln -s usr/bin/tweakers "$APPDIR/AppRun"
-
-        # Icons — convert SVG to PNG for the raster sizes, keep SVG for scalable
-        cp icon.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/tweakers.svg"
-        rsvg-convert -w 256 -h 256 icon.svg \
-          -o "$APPDIR/usr/share/icons/hicolor/256x256/apps/tweakers.png"
-
-        # Root-level icon required by appimagetool
-        cp "$APPDIR/usr/share/icons/hicolor/256x256/apps/tweakers.png" "$APPDIR/tweakers.png"
-
-        # Root-level .desktop symlink required by appimagetool
-        cp tweakers.desktop "$APPDIR/tweakers.desktop"
-
-        # AppStream metadata
-        cp com.lilithlinux.tweakers.metainfo.xml "$APPDIR/usr/share/metainfo/"
-
-    - name: Build AppImage
-      env:
-        APPIMAGE_EXTRACT_AND_RUN: 1
-        ARCH: x86_64
-      run: |
-        appimagetool "$APPDIR" "Tweakers-x86_64.AppImage"
-
-    - name: Rename and stage artifacts
+    - name: Stage artifact
       run: |
         mkdir -p dist
         TAG="${GITHUB_REF_NAME:-latest}"
-
         DEB=$(find target/debian -name '*.deb' | head -1)
         cp "$DEB" "dist/tweakers-${TAG}-amd64.deb"
 
-        cp "Tweakers-x86_64.AppImage" "dist/Tweakers-${TAG}-x86_64.AppImage"
-
-    - name: Upload build artifacts
+    - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: tweakers-release-packages
-        path: dist/*
+        name: tweakers-deb
+        path: dist/*.deb
 
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
-        files: |
-          dist/tweakers-*.deb
-          dist/Tweakers-*.AppImage
+        files: dist/tweakers-*.deb
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
