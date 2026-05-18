@@ -257,9 +257,20 @@ component TweaksTab inherits Rectangle {
     in-out property <bool> watchdog-enabled: true;
     in-out property <int> thp-index: 1; // 0: always, 1: madvise, 2: never
     
+    // COSMIC companion app availability / status
+    in property <bool> cosmic-tweaks-available: false;
+    in property <bool> fan-control-available: false;
+    in property <bool> color-picker-available: false;
+    in property <string> cosmic-tweaks-status: "";
+    in property <string> fan-control-status: "";
+    in property <string> color-picker-status: "";
+    
     callback apply-tweaks;
     callback reset-defaults;
     callback set-profile(string);
+    callback launch-cosmic-tweaks;
+    callback launch-fan-control;
+    callback launch-color-picker;
     
     background: Theme.background;
     
@@ -460,6 +471,149 @@ component TweaksTab inherits Rectangle {
                         label: "Transparent Huge Pages";
                         options: ["always", "madvise", "never"];
                         selected-index <=> thp-index;
+                    }
+                }
+            }
+
+            // ── COSMIC Desktop Integration ──────────────────────────────────
+            Card {
+                title: "🪐 COSMIC Desktop Apps";
+
+                VerticalLayout {
+                    spacing: Theme.spacing-sm;
+
+                    Text {
+                        text: "Open companion COSMIC applications for advanced desktop control.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-sm;
+
+                        // cosmic-tweaks
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            height: 80px;
+                            background: cosmic-tweaks-available ? Theme.surface-variant : #151515;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: ct-touch.has-hover && cosmic-tweaks-available ? Theme.accent : Theme.border;
+                            opacity: cosmic-tweaks-available ? 1.0 : 0.5;
+                            animate border-color { duration: 120ms; }
+
+                            ct-touch := TouchArea {
+                                mouse-cursor: cosmic-tweaks-available ? pointer : default;
+                                clicked => {
+                                    if (cosmic-tweaks-available) { launch-cosmic-tweaks(); }
+                                }
+                            }
+                            VerticalLayout {
+                                padding: Theme.spacing-sm;
+                                spacing: 2px;
+                                alignment: center;
+                                Text { text: "🔧"; font-size: 24px; horizontal-alignment: center; }
+                                Text {
+                                    text: "COSMIC Tweaks";
+                                    color: cosmic-tweaks-available ? Theme.text-primary : Theme.text-muted;
+                                    font-size: Theme.font-sm;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: cosmic-tweaks-available
+                                        ? "› Open"
+                                        : (cosmic-tweaks-status != "" ? cosmic-tweaks-status : "Not installed");
+                                    color: cosmic-tweaks-available ? Theme.accent : Theme.text-muted;
+                                    font-size: Theme.font-xs;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+
+                        // fan-control
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            height: 80px;
+                            background: fan-control-available ? Theme.surface-variant : #151515;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: fc-touch.has-hover && fan-control-available ? Theme.accent : Theme.border;
+                            opacity: fan-control-available ? 1.0 : 0.5;
+                            animate border-color { duration: 120ms; }
+
+                            fc-touch := TouchArea {
+                                mouse-cursor: fan-control-available ? pointer : default;
+                                clicked => {
+                                    if (fan-control-available) { launch-fan-control(); }
+                                }
+                            }
+                            VerticalLayout {
+                                padding: Theme.spacing-sm;
+                                spacing: 2px;
+                                alignment: center;
+                                Text { text: "🌀"; font-size: 24px; horizontal-alignment: center; }
+                                Text {
+                                    text: "Fan Control";
+                                    color: fan-control-available ? Theme.text-primary : Theme.text-muted;
+                                    font-size: Theme.font-sm;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: fan-control-available
+                                        ? "› Open"
+                                        : (fan-control-status != "" ? fan-control-status : "Not installed");
+                                    color: fan-control-available ? Theme.accent : Theme.text-muted;
+                                    font-size: Theme.font-xs;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+
+                        // cosmic-color-picker
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            height: 80px;
+                            background: color-picker-available ? Theme.surface-variant : #151515;
+                            border-radius: Theme.radius-md;
+                            border-width: 1px;
+                            border-color: cp-touch.has-hover && color-picker-available ? Theme.accent : Theme.border;
+                            opacity: color-picker-available ? 1.0 : 0.5;
+                            animate border-color { duration: 120ms; }
+
+                            cp-touch := TouchArea {
+                                mouse-cursor: color-picker-available ? pointer : default;
+                                clicked => {
+                                    if (color-picker-available) { launch-color-picker(); }
+                                }
+                            }
+                            VerticalLayout {
+                                padding: Theme.spacing-sm;
+                                spacing: 2px;
+                                alignment: center;
+                                Text { text: "🎨"; font-size: 24px; horizontal-alignment: center; }
+                                Text {
+                                    text: "Color Picker";
+                                    color: color-picker-available ? Theme.text-primary : Theme.text-muted;
+                                    font-size: Theme.font-sm;
+                                    font-weight: 600;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: color-picker-available
+                                        ? "› Open"
+                                        : (color-picker-status != "" ? color-picker-status : "Not installed");
+                                    color: color-picker-available ? Theme.accent : Theme.text-muted;
+                                    font-size: Theme.font-xs;
+                                    horizontal-alignment: center;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1169,6 +1323,9 @@ export component MainWindow inherits Window {
     callback sudo-cancel;
     callback launch-czkawka-scan(string);
     callback install-krokiet;
+    callback launch-cosmic-tweaks;
+    callback launch-fan-control;
+    callback launch-color-picker;
     
     // czkawka / krokiet state
     in-out property <bool> krokiet-available: false;
@@ -1176,6 +1333,14 @@ export component MainWindow inherits Window {
     in-out property <string> czkawka-status: "Checking...";
     in-out property <int> czkawka-result-count: 0;
     in-out property <bool> is-czkawka-scanning: false;
+
+    // COSMIC companion app state
+    in-out property <bool> cosmic-tweaks-available: false;
+    in-out property <bool> fan-control-available: false;
+    in-out property <bool> color-picker-available: false;
+    in-out property <string> cosmic-tweaks-status: "";
+    in-out property <string> fan-control-status: "";
+    in-out property <string> color-picker-status: "";
     
     HorizontalLayout {
         // Sidebar
@@ -1269,16 +1434,21 @@ export component MainWindow inherits Window {
                 bbr-enabled <=> bbr-enabled;
                 watchdog-enabled <=> watchdog-enabled;
                 thp-index <=> thp-index;
+
+                // COSMIC apps pass-through
+                cosmic-tweaks-available: cosmic-tweaks-available;
+                fan-control-available: fan-control-available;
+                color-picker-available: color-picker-available;
+                cosmic-tweaks-status: cosmic-tweaks-status;
+                fan-control-status: fan-control-status;
+                color-picker-status: color-picker-status;
                 
-                apply-tweaks => {
-                    apply-tweaks();
-                }
-                reset-defaults => {
-                    reset-defaults();
-                }
-                set-profile(p) => {
-                    set-profile(p);
-                }
+                apply-tweaks => { apply-tweaks(); }
+                reset-defaults => { reset-defaults(); }
+                set-profile(p) => { set-profile(p); }
+                launch-cosmic-tweaks => { launch-cosmic-tweaks(); }
+                launch-fan-control => { launch-fan-control(); }
+                launch-color-picker => { launch-color-picker(); }
             }
             
             if active-tab == 1 : CleanerTab {

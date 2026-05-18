@@ -4,6 +4,7 @@ mod backup;
 mod benchmark;
 mod sudo_handler;
 mod czkawka;
+mod cosmic_apps;
 
 use std::sync::Arc;
 use std::path::PathBuf;
@@ -20,6 +21,7 @@ pub struct AppState {
     pub pending_action: PendingAction,
     pub askpass_path: String,
     pub czkawka: czkawka::CzkawkaAvailability,
+    pub cosmic_apps: cosmic_apps::CosmicAppsAvailability,
 }
 
 #[derive(Clone, Default, Debug, PartialEq)]
@@ -51,6 +53,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             s.czkawka.cli_path
         );
 
+        // Detect COSMIC companion apps
+        s.cosmic_apps = cosmic_apps::detect_apps();
+        log::info!(
+            "cosmic apps: tweaks={:?}, fan={:?}, color={:?}",
+            s.cosmic_apps.cosmic_tweaks_path,
+            s.cosmic_apps.fan_control_path,
+            s.cosmic_apps.color_picker_path,
+        );
+
         if backup::check_rclone_installed() {
             if let Ok(remotes) = backup::list_remotes() {
                 if let Some(first) = remotes.first() {
@@ -71,6 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_backup_callbacks(&app, state.clone());
     setup_benchmark_callbacks(&app, state.clone());
     setup_sudo_callbacks(&app, state.clone());
+    setup_cosmic_app_callbacks(&app, state.clone());
 
     app.run()?;
 
@@ -141,6 +153,11 @@ async fn initialize_ui(app: &MainWindow, state: &Arc<Mutex<AppState>>) {
             "Not installed — install krokiet for full functionality".into()
         }
     );
+
+    // COSMIC companion app availability flags
+    app.set_cosmic_tweaks_available(s.cosmic_apps.cosmic_tweaks_path.is_some());
+    app.set_fan_control_available(s.cosmic_apps.fan_control_path.is_some());
+    app.set_color_picker_available(s.cosmic_apps.color_picker_path.is_some());
 }
 
 fn setup_tweak_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
@@ -858,5 +875,122 @@ fn setup_sudo_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
             app.set_sudo_password("".into());
             app.set_sudo_error("".into());
         }
+    });
+}
+
+fn setup_cosmic_app_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
+    // ── cosmic-tweaks ──────────────────────────────────────────────────────
+    let state_ct = state.clone();
+    let app_weak_ct = app.as_weak();
+    app.on_launch_cosmic_tweaks(move || {
+        let state = state_ct.clone();
+        let app_weak = app_weak_ct.clone();
+        tokio::spawn(async move {
+            let path = {
+                let s = state.lock().await;
+                s.cosmic_apps.cosmic_tweaks_path.clone()
+            };
+            match path {
+                Some(p) => match cosmic_apps::launch_cosmic_tweaks(&p) {
+                    Ok(()) => log::info!("cosmic-tweaks launched"),
+                    Err(e) => {
+                        log::error!("{}", e);
+                        let msg = e;
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(app) = app_weak.upgrade() {
+                                app.set_cosmic_tweaks_status(msg.into());
+                            }
+                        }).ok();
+                    }
+                },
+                None => {
+                    let hint = cosmic_apps::cosmic_tweaks_install_hint();
+                    log::warn!("{}", hint);
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(app) = app_weak.upgrade() {
+                            app.set_cosmic_tweaks_status(
+                                "Not installed — see github.com/cosmic-utils/tweaks".into()
+                            );
+                        }
+                    }).ok();
+                }
+            }
+        });
+    });
+
+    // ── fan-control ────────────────────────────────────────────────────────
+    let state_fc = state.clone();
+    let app_weak_fc = app.as_weak();
+    app.on_launch_fan_control(move || {
+        let state = state_fc.clone();
+        let app_weak = app_weak_fc.clone();
+        tokio::spawn(async move {
+            let path = {
+                let s = state.lock().await;
+                s.cosmic_apps.fan_control_path.clone()
+            };
+            match path {
+                Some(p) => match cosmic_apps::launch_fan_control(&p) {
+                    Ok(()) => log::info!("fan-control launched"),
+                    Err(e) => {
+                        log::error!("{}", e);
+                        let msg = e;
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(app) = app_weak.upgrade() {
+                                app.set_fan_control_status(msg.into());
+                            }
+                        }).ok();
+                    }
+                },
+                None => {
+                    log::warn!("{}", cosmic_apps::fan_control_install_hint());
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(app) = app_weak.upgrade() {
+                            app.set_fan_control_status(
+                                "Not installed — see github.com/wiiznokes/fan-control".into()
+                            );
+                        }
+                    }).ok();
+                }
+            }
+        });
+    });
+
+    // ── cosmic-color-picker ────────────────────────────────────────────────
+    let state_cp = state.clone();
+    let app_weak_cp = app.as_weak();
+    app.on_launch_color_picker(move || {
+        let state = state_cp.clone();
+        let app_weak = app_weak_cp.clone();
+        tokio::spawn(async move {
+            let path = {
+                let s = state.lock().await;
+                s.cosmic_apps.color_picker_path.clone()
+            };
+            match path {
+                Some(p) => match cosmic_apps::launch_color_picker(&p) {
+                    Ok(()) => log::info!("cosmic-color-picker launched"),
+                    Err(e) => {
+                        log::error!("{}", e);
+                        let msg = e;
+                        slint::invoke_from_event_loop(move || {
+                            if let Some(app) = app_weak.upgrade() {
+                                app.set_color_picker_status(msg.into());
+                            }
+                        }).ok();
+                    }
+                },
+                None => {
+                    log::warn!("{}", cosmic_apps::color_picker_install_hint());
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(app) = app_weak.upgrade() {
+                            app.set_color_picker_status(
+                                "Not installed — see github.com/PixelDoted/cosmic-color-picker".into()
+                            );
+                        }
+                    }).ok();
+                }
+            }
+        });
     });
 }

@@ -14,22 +14,22 @@ permissions:
 jobs:
   build-and-package:
     runs-on: ubuntu-22.04
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           build-essential pkg-config libssl-dev libgtk-3-dev libwebp-dev \
           libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-          patchelf curl file
-    
+          patchelf curl file wget
+
     - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
-    
+
     - name: Cache Cargo registry
       uses: actions/cache@v4
       with:
@@ -43,40 +43,37 @@ jobs:
     - name: Install cargo-deb
       run: cargo install cargo-deb
 
-    - name: Build release binary and DEB
+    - name: Build release binary
+      run: cargo build --release
+
+    - name: Build .deb package
+      run: cargo deb
+
+    - name: Install linuxdeploy tools (extracted, not AppImage-in-AppImage)
       run: |
-        cargo build --release
-        cargo deb
+        # Pull the pre-extracted linuxdeploy binaries from the GitHub release assets
+        # Using the "continuous" release which provides plain tarballs alongside AppImages
+        mkdir -p "$HOME/.local/bin"
 
-    - name: Download linuxdeploy and appimage plugin
-      run: |
-        # Download linuxdeploy
-        curl -fsSL -o linuxdeploy \
-          "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
-        chmod +x linuxdeploy
-        ./linuxdeploy --appimage-extract
-        sudo mkdir -p /usr/local/share/linuxdeploy
-        sudo mv squashfs-root/* /usr/local/share/linuxdeploy/
-        rm -rf squashfs-root linuxdeploy
-        
-        # Create self-contained wrapper for linuxdeploy
-        echo '#!/bin/sh' | sudo tee /usr/local/bin/linuxdeploy
-        echo 'exec /usr/local/share/linuxdeploy/AppRun "$@"' | sudo tee -a /usr/local/bin/linuxdeploy
-        sudo chmod +x /usr/local/bin/linuxdeploy
+        # Download linuxdeploy x86_64 AppImage and extract it so FUSE is not needed
+        wget -q "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
+          -O /tmp/linuxdeploy.AppImage
+        chmod +x /tmp/linuxdeploy.AppImage
+        cd /tmp && ./linuxdeploy.AppImage --appimage-extract > /dev/null
+        sudo cp -r squashfs-root/. /usr/local/
+        rm -rf squashfs-root /tmp/linuxdeploy.AppImage
 
-        # Download linuxdeploy-plugin-appimage
-        curl -fsSL -o linuxdeploy-plugin-appimage \
-          "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage"
-        chmod +x linuxdeploy-plugin-appimage
-        ./linuxdeploy-plugin-appimage --appimage-extract
-        sudo mkdir -p /usr/local/share/linuxdeploy-plugin-appimage
-        sudo mv squashfs-root/* /usr/local/share/linuxdeploy-plugin-appimage/
-        rm -rf squashfs-root linuxdeploy-plugin-appimage
+        # Download linuxdeploy-plugin-appimage and extract it
+        wget -q "https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage" \
+          -O /tmp/linuxdeploy-plugin-appimage.AppImage
+        chmod +x /tmp/linuxdeploy-plugin-appimage.AppImage
+        cd /tmp && ./linuxdeploy-plugin-appimage.AppImage --appimage-extract > /dev/null
+        sudo cp squashfs-root/usr/bin/linuxdeploy-plugin-appimage /usr/local/bin/
+        rm -rf squashfs-root /tmp/linuxdeploy-plugin-appimage.AppImage
 
-        # Create self-contained wrapper for the appimage plugin
-        echo '#!/bin/sh' | sudo tee /usr/local/bin/linuxdeploy-plugin-appimage
-        echo 'exec /usr/local/share/linuxdeploy-plugin-appimage/AppRun "$@"' | sudo tee -a /usr/local/bin/linuxdeploy-plugin-appimage
-        sudo chmod +x /usr/local/bin/linuxdeploy-plugin-appimage
+        # Verify both tools are now available
+        which linuxdeploy
+        which linuxdeploy-plugin-appimage
 
     - name: Assemble AppDir
       run: |
@@ -85,40 +82,39 @@ jobs:
         mkdir -p \
           "$APPDIR/usr/bin" \
           "$APPDIR/usr/share/applications" \
-          "$APPDIR/usr/share/icons/hicolor/scalable/apps"
+          "$APPDIR/usr/share/icons/hicolor/scalable/apps" \
+          "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
+          "$APPDIR/usr/share/metainfo"
 
-        cp target/release/tweakers "$APPDIR/usr/bin/"
-        cp tweakers.desktop "$APPDIR/usr/share/applications/"
-        cp icon.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/tweakers.svg"
+        cp target/release/tweakers       "$APPDIR/usr/bin/"
+        cp tweakers.desktop              "$APPDIR/usr/share/applications/"
+        cp icon.svg                      "$APPDIR/usr/share/icons/hicolor/scalable/apps/tweakers.svg"
+        cp com.lilithlinux.tweakers.metainfo.xml "$APPDIR/usr/share/metainfo/"
+
+        # Generate a raster icon for linuxdeploy (requires at least one PNG)
+        sudo apt-get install -y librsvg2-bin
+        rsvg-convert -w 256 -h 256 icon.svg -o "$APPDIR/usr/share/icons/hicolor/256x256/apps/tweakers.png"
 
     - name: Build AppImage
+      env:
+        ARCH: x86_64
+        NO_STRIP: 1
       run: |
-        ARCH=x86_64 linuxdeploy \
+        linuxdeploy \
           --appdir AppDir \
           --desktop-file tweakers.desktop \
-          --icon-file icon.svg \
+          --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/tweakers.png \
           --output appimage
-      env:
-        APPIMAGE_EXTRACT_AND_RUN: 1
 
-    - name: Organize artifacts
+    - name: Rename artifacts
       run: |
         mkdir -p dist
-        # Copy deb package
         DEB=$(find target/debian -name '*.deb' | head -1)
-        cp "$DEB" dist/tweakers-latest-amd64.deb
-        if [[ $GITHUB_REF == refs/tags/v* ]]; then
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          cp "$DEB" "dist/tweakers-${TAG_NAME}-amd64.deb"
-        fi
-        
-        # Copy AppImage
+        TAG="${GITHUB_REF_NAME:-latest}"
+        cp "$DEB" "dist/tweakers-${TAG}-amd64.deb"
+
         APPIMAGE=$(find . -maxdepth 1 -name '*.AppImage' | head -1)
-        cp "$APPIMAGE" dist/Tweakers-latest-x86_64.AppImage
-        if [[ $GITHUB_REF == refs/tags/v* ]]; then
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          cp "$APPIMAGE" "dist/Tweakers-${TAG_NAME}-x86_64.AppImage"
-        fi
+        cp "$APPIMAGE" "dist/Tweakers-${TAG}-x86_64.AppImage"
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
