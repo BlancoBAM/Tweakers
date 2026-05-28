@@ -1,6 +1,21 @@
 // Tweakers - Main Application Window
 import { Theme, TweakButton, Card, ToggleSwitch, TweakSlider, TweakSelect, ProgressBar } from "theme.slint";
 
+// Named struct for COSMIC theme data — generates a proper Rust type
+struct CosmicThemeData {
+    id: int,
+    name: string,
+    author: string,
+    is-dark: bool,
+    accent-r: int,
+    accent-g: int,
+    accent-b: int,
+    bg-r: int,
+    bg-g: int,
+    bg-b: int,
+    downloads: int,
+}
+
 // Czkawka scan mode button — styled to match krokiet's sidebar item look
 component CzkawkaModeButton inherits Rectangle {
     in property <string> icon: "📄";
@@ -39,7 +54,6 @@ component CzkawkaModeButton inherits Rectangle {
         padding: Theme.spacing-sm;
         spacing: Theme.spacing-sm;
 
-        // Icon
         Text {
             text: icon;
             font-size: 28px;
@@ -47,7 +61,6 @@ component CzkawkaModeButton inherits Rectangle {
             width: 40px;
         }
 
-        // Labels
         VerticalLayout {
             spacing: 2px;
             alignment: center;
@@ -67,7 +80,6 @@ component CzkawkaModeButton inherits Rectangle {
 
         Rectangle { horizontal-stretch: 1; }
 
-        // Arrow indicator
         if available : Text {
             text: scanning ? "⏳" : "›";
             color: Theme.accent;
@@ -128,7 +140,7 @@ component NavItem inherits Rectangle {
     }
 }
 
-// Sudo password dialog
+// Sudo password dialog — uses a real TextInput for password entry
 component SudoDialog inherits Rectangle {
     in property <bool> dialog-visible: false;
     in property <string> action-description: "";
@@ -143,12 +155,15 @@ component SudoDialog inherits Rectangle {
     if dialog-visible : Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        width: 400px;
-        height: 280px;
+        width: 420px;
+        height: 300px;
         background: Theme.surface;
         border-radius: Theme.radius-lg;
         border-width: 1px;
         border-color: Theme.border;
+        drop-shadow-color: #000000aa;
+        drop-shadow-blur: 24px;
+        drop-shadow-offset-y: 8px;
         
         VerticalLayout {
             padding: Theme.spacing-lg;
@@ -156,9 +171,11 @@ component SudoDialog inherits Rectangle {
             
             // Header
             HorizontalLayout {
+                spacing: Theme.spacing-sm;
                 Text {
                     text: "🔐";
                     font-size: Theme.font-xl;
+                    vertical-alignment: center;
                 }
                 Text {
                     text: "Authentication Required";
@@ -177,30 +194,44 @@ component SudoDialog inherits Rectangle {
                 wrap: word-wrap;
             }
             
-            // Password input (simplified - real impl would use proper input)
-            Rectangle {
-                height: 40px;
+            // Real password input field
+            pwd-box := Rectangle {
+                height: 44px;
                 background: Theme.surface-variant;
                 border-radius: Theme.radius-md;
                 border-width: 1px;
-                border-color: error-message != "" ? Theme.error : Theme.border;
-                
-                HorizontalLayout {
-                    padding-left: Theme.spacing-md;
-                    padding-right: Theme.spacing-md;
-                    
-                    Text {
-                        text: password != "" ? "••••••••" : "Password";
-                        color: password != "" ? Theme.text-primary : Theme.text-muted;
-                        font-size: Theme.font-md;
-                        vertical-alignment: center;
-                    }
+                border-color: error-message != "" ? Theme.error : (pwd-input.has-focus ? Theme.accent : Theme.border);
+                clip: true;
+
+                animate border-color { duration: 100ms; }
+
+                // Placeholder text (shown when empty)
+                if password == "" : Text {
+                    x: Theme.spacing-md;
+                    y: (parent.height - self.preferred-height) / 2;
+                    text: "Enter password…";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-md;
+                }
+
+                // The actual text input
+                pwd-input := TextInput {
+                    x: Theme.spacing-md;
+                    y: (parent.height - self.preferred-height) / 2;
+                    width: parent.width - Theme.spacing-md * 2;
+                    input-type: InputType.password;
+                    text <=> password;
+                    font-size: Theme.font-md;
+                    color: Theme.text-primary;
+                    enabled: !is-loading;
+                    // Submit on Enter key
+                    accepted => { submit(password); }
                 }
             }
             
             // Error message
             if error-message != "" : Text {
-                text: error-message;
+                text: "⚠ " + error-message;
                 color: Theme.error;
                 font-size: Theme.font-sm;
             }
@@ -208,7 +239,7 @@ component SudoDialog inherits Rectangle {
             // Loading indicator
             if is-loading : ProgressBar {
                 progress: 0.5;
-                label: "Applying changes...";
+                label: "Applying changes…";
             }
             
             // Buttons
@@ -225,10 +256,244 @@ component SudoDialog inherits Rectangle {
                 TweakButton {
                     label: "Authenticate";
                     primary: true;
-                    enabled: !is-loading;
+                    enabled: !is-loading && password != "";
                     clicked => { submit(password); }
                 }
             }
+        }
+    }
+}
+
+// Live resource usage bar — CPU% and RAM% with animated thin bars
+component ResourceBar inherits Rectangle {
+    in property <float> cpu-pct: 0;
+    in property <float> ram-pct: 0;
+    in property <int> ram-used-mb: 0;
+    in property <int> ram-total-mb: 0;
+
+    height: 56px;
+    background: Theme.surface;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    HorizontalLayout {
+        padding-left: Theme.spacing-md;
+        padding-right: Theme.spacing-md;
+        padding-top: Theme.spacing-sm;
+        padding-bottom: Theme.spacing-sm;
+        spacing: Theme.spacing-lg;
+
+        // CPU block
+        VerticalLayout {
+            spacing: 3px;
+            horizontal-stretch: 1;
+            alignment: center;
+
+            HorizontalLayout {
+                Text {
+                    text: "CPU";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    font-weight: 600;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: round(cpu-pct) + "%";
+                    color: cpu-pct > 80 ? Theme.error : (cpu-pct > 50 ? Theme.warning : Theme.accent);
+                    font-size: Theme.font-xs;
+                    font-weight: 700;
+                }
+            }
+
+            Rectangle {
+                height: 6px;
+                background: Theme.surface-variant;
+                border-radius: 3px;
+
+                Rectangle {
+                    width: parent.width * (cpu-pct / 100);
+                    height: parent.height;
+                    background: cpu-pct > 80 ? Theme.error : (cpu-pct > 50 ? Theme.warning : Theme.accent);
+                    border-radius: 3px;
+                    animate width { duration: 600ms; easing: ease-out; }
+                }
+            }
+        }
+
+        // Divider
+        Rectangle {
+            width: 1px;
+            background: Theme.border;
+        }
+
+        // RAM block
+        VerticalLayout {
+            spacing: 3px;
+            horizontal-stretch: 1;
+            alignment: center;
+
+            HorizontalLayout {
+                Text {
+                    text: "RAM";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    font-weight: 600;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: ram-total-mb > 0
+                        ? round(ram-used-mb / 1024 * 10) / 10 + " / " + round(ram-total-mb / 1024 * 10) / 10 + " GB"
+                        : round(ram-pct) + "%";
+                    color: ram-pct > 90 ? Theme.error : (ram-pct > 70 ? Theme.warning : Theme.accent);
+                    font-size: Theme.font-xs;
+                    font-weight: 700;
+                }
+            }
+
+            Rectangle {
+                height: 6px;
+                background: Theme.surface-variant;
+                border-radius: 3px;
+
+                Rectangle {
+                    width: parent.width * (ram-pct / 100);
+                    height: parent.height;
+                    background: ram-pct > 90 ? Theme.error : (ram-pct > 70 ? Theme.warning : Theme.success);
+                    border-radius: 3px;
+                    animate width { duration: 600ms; easing: ease-out; }
+                }
+            }
+        }
+    }
+}
+
+// Toast notification — slides in from the bottom-right, auto-dismissed from Rust
+component ToastNotification inherits Rectangle {
+    in property <bool> toast-visible: false;
+    in property <string> message: "";
+    in property <bool> is-success: true;
+
+    width: 340px;
+    height: message != "" ? 54px : 0px;
+    opacity: toast-visible ? 1.0 : 0.0;
+    background: is-success ? #1a3525 : #3a1a1a;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: is-success ? Theme.success : Theme.error;
+    drop-shadow-color: #000000cc;
+    drop-shadow-blur: 16px;
+    drop-shadow-offset-y: 4px;
+
+    animate opacity { duration: 280ms; easing: ease-in-out; }
+    animate height { duration: 200ms; easing: ease-out; }
+
+    HorizontalLayout {
+        padding-left: Theme.spacing-md;
+        padding-right: Theme.spacing-md;
+        spacing: Theme.spacing-sm;
+        alignment: center;
+
+        Text {
+            text: is-success ? "✓" : "✗";
+            color: is-success ? Theme.success : Theme.error;
+            font-size: Theme.font-lg;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Text {
+            text: message;
+            color: Theme.text-primary;
+            font-size: Theme.font-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// Individual COSMIC theme card for the gallery
+component CosmicThemeCard inherits Rectangle {
+    in property <string> theme-name: "";
+    in property <string> theme-author: "";
+    in property <int> theme-downloads: 0;
+    in property <bool> theme-is-dark: true;
+    in property <color> accent-col: #7aa2f7;
+    in property <color> bg-col: #1a1b26;
+    in property <bool> installing: false;
+    callback install-clicked;
+
+    height: 88px;
+    background: card-touch.has-hover ? Theme.surface : Theme.surface-variant;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: card-touch.has-hover ? accent-col : Theme.border;
+    animate border-color { duration: 120ms; }
+    animate background { duration: 120ms; }
+
+    card-touch := TouchArea { mouse-cursor: default; }
+
+    HorizontalLayout {
+        padding: Theme.spacing-sm;
+        spacing: Theme.spacing-sm;
+
+        // Colour preview swatch
+        Rectangle {
+            width: 48px;
+            border-radius: Theme.radius-sm;
+            background: bg-col;
+            border-width: 1px;
+            border-color: Theme.border;
+
+            Rectangle {
+                x: parent.width - self.width - 4px;
+                y: parent.height - self.height - 4px;
+                width: 16px;
+                height: 16px;
+                border-radius: 8px;
+                background: accent-col;
+            }
+        }
+
+        // Info
+        VerticalLayout {
+            spacing: 2px;
+            alignment: center;
+            horizontal-stretch: 1;
+
+            Text {
+                text: theme-name;
+                color: Theme.text-primary;
+                font-size: Theme.font-sm;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Text {
+                text: "by " + theme-author;
+                color: Theme.text-secondary;
+                font-size: Theme.font-xs;
+            }
+            HorizontalLayout {
+                spacing: Theme.spacing-sm;
+                Text {
+                    text: theme-is-dark ? "🌙 Dark" : "☀ Light";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-xs;
+                }
+                Text {
+                    text: "↓ " + theme-downloads;
+                    color: Theme.text-muted;
+                    font-size: Theme.font-xs;
+                }
+            }
+        }
+
+        // Install button
+        TweakButton {
+            label: installing ? "Installing…" : "Install";
+            primary: !installing;
+            enabled: !installing;
+            clicked => { install-clicked(); }
         }
     }
 }
@@ -255,7 +520,13 @@ component TweaksTab inherits Rectangle {
     
     // Kernel
     in-out property <bool> watchdog-enabled: true;
-    in-out property <int> thp-index: 1; // 0: always, 1: madvise, 2: never
+    in-out property <int> thp-index: 1;
+
+    // Resource monitor
+    in property <float> cpu-usage: 0;
+    in property <float> ram-usage-pct: 0;
+    in property <int> ram-used-mb: 0;
+    in property <int> ram-total-mb: 0;
     
     // COSMIC companion app availability / status
     in property <bool> cosmic-tweaks-available: false;
@@ -264,6 +535,12 @@ component TweaksTab inherits Rectangle {
     in property <string> cosmic-tweaks-status: "";
     in property <string> fan-control-status: "";
     in property <string> color-picker-status: "";
+
+    // COSMIC themes
+    in property <[CosmicThemeData]> cosmic-themes: [];
+    in property <bool> themes-loading: false;
+    in property <string> themes-error: "";
+    in property <int> installing-theme-id: -1;
     
     callback apply-tweaks;
     callback reset-defaults;
@@ -271,6 +548,8 @@ component TweaksTab inherits Rectangle {
     callback launch-cosmic-tweaks;
     callback launch-fan-control;
     callback launch-color-picker;
+    callback refresh-themes;
+    callback install-theme(int);
     
     background: Theme.background;
     
@@ -299,6 +578,14 @@ component TweaksTab inherits Rectangle {
                     primary: true;
                     clicked => { apply-tweaks(); }
                 }
+            }
+
+            // Live resource monitor bar
+            ResourceBar {
+                cpu-pct: cpu-usage;
+                ram-pct: ram-usage-pct;
+                ram-used-mb: ram-used-mb;
+                ram-total-mb: ram-total-mb;
             }
             
             // Quick Profiles
@@ -475,18 +762,123 @@ component TweaksTab inherits Rectangle {
                 }
             }
 
-            // ── COSMIC Desktop Integration ──────────────────────────────────
+            // ── COSMIC Desktop Integration (Themes + Apps combined) ──────────────
             Card {
-                title: "🪐 COSMIC Desktop Apps";
+                title: "🪐 COSMIC Themes & Desktop Apps";
 
                 VerticalLayout {
-                    spacing: Theme.spacing-sm;
+                    spacing: Theme.spacing-md;
 
+                    // Theme gallery header
+                    HorizontalLayout {
+                        spacing: Theme.spacing-sm;
+                        Text {
+                            text: "Browse and install community themes from cosmic-themes.org";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            wrap: word-wrap;
+                        }
+                        TweakButton {
+                            label: themes-loading ? "Loading…" : "↻ Refresh";
+                            enabled: !themes-loading;
+                            clicked => { refresh-themes(); }
+                        }
+                        TweakButton {
+                            label: "🌐 Open Site";
+                            clicked => {
+                                // opens in default browser via Rust callback
+                                refresh-themes();
+                            }
+                        }
+                    }
+
+                    // Error state
+                    if themes-error != "" : Rectangle {
+                        height: 36px;
+                        background: #2a1a1a;
+                        border-radius: Theme.radius-md;
+                        border-width: 1px;
+                        border-color: Theme.error;
+                        HorizontalLayout {
+                            padding-left: Theme.spacing-md;
+                            Text {
+                                text: "⚠ " + themes-error;
+                                color: Theme.error;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Loading state
+                    if themes-loading && cosmic-themes.length == 0 : Rectangle {
+                        height: 60px;
+                        background: Theme.surface-variant;
+                        border-radius: Theme.radius-md;
+                        HorizontalLayout {
+                            alignment: center;
+                            Text {
+                                text: "⏳ Fetching themes from cosmic-themes.org…";
+                                color: Theme.text-muted;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Theme gallery grid (two columns)
+                    if cosmic-themes.length > 0 : VerticalLayout {
+                        spacing: Theme.spacing-xs;
+
+                        for theme in cosmic-themes : CosmicThemeCard {
+                            theme-name: theme.name;
+                            theme-author: theme.author;
+                            theme-downloads: theme.downloads;
+                            theme-is-dark: theme.is-dark;
+                            accent-col: rgba(theme.accent-r, theme.accent-g, theme.accent-b, 255);
+                            bg-col: rgba(theme.bg-r, theme.bg-g, theme.bg-b, 255);
+                            installing: installing-theme-id == theme.id;
+                            install-clicked => { install-theme(theme.id); }
+                        }
+                    }
+
+                    // Empty state (no themes loaded yet)
+                    if cosmic-themes.length == 0 && !themes-loading : Rectangle {
+                        height: 70px;
+                        background: Theme.surface-variant;
+                        border-radius: Theme.radius-md;
+                        HorizontalLayout {
+                            alignment: center;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 4px;
+                                Text {
+                                    text: "No themes loaded";
+                                    color: Theme.text-muted;
+                                    font-size: Theme.font-sm;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "Click ↻ Refresh to fetch from cosmic-themes.org";
+                                    color: Theme.text-muted;
+                                    font-size: Theme.font-xs;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+                    }
+
+                    // Divider
+                    Rectangle { height: 1px; background: Theme.border; }
+
+                    // COSMIC companion app launchers (retained below gallery)
                     Text {
-                        text: "Open companion COSMIC applications for advanced desktop control.";
+                        text: "COSMIC companion apps:";
                         color: Theme.text-secondary;
                         font-size: Theme.font-sm;
-                        wrap: word-wrap;
+                        font-weight: 600;
                     }
 
                     HorizontalLayout {
@@ -495,7 +887,7 @@ component TweaksTab inherits Rectangle {
                         // cosmic-tweaks
                         Rectangle {
                             horizontal-stretch: 1;
-                            height: 80px;
+                            height: 72px;
                             background: cosmic-tweaks-available ? Theme.surface-variant : #151515;
                             border-radius: Theme.radius-md;
                             border-width: 1px;
@@ -505,26 +897,22 @@ component TweaksTab inherits Rectangle {
 
                             ct-touch := TouchArea {
                                 mouse-cursor: cosmic-tweaks-available ? pointer : default;
-                                clicked => {
-                                    if (cosmic-tweaks-available) { launch-cosmic-tweaks(); }
-                                }
+                                clicked => { if (cosmic-tweaks-available) { launch-cosmic-tweaks(); } }
                             }
                             VerticalLayout {
                                 padding: Theme.spacing-sm;
                                 spacing: 2px;
                                 alignment: center;
-                                Text { text: "🔧"; font-size: 24px; horizontal-alignment: center; }
+                                Text { text: "🔧"; font-size: 22px; horizontal-alignment: center; }
                                 Text {
                                     text: "COSMIC Tweaks";
                                     color: cosmic-tweaks-available ? Theme.text-primary : Theme.text-muted;
-                                    font-size: Theme.font-sm;
+                                    font-size: Theme.font-xs;
                                     font-weight: 600;
                                     horizontal-alignment: center;
                                 }
                                 Text {
-                                    text: cosmic-tweaks-available
-                                        ? "› Open"
-                                        : (cosmic-tweaks-status != "" ? cosmic-tweaks-status : "Not installed");
+                                    text: cosmic-tweaks-available ? "› Open" : (cosmic-tweaks-status != "" ? cosmic-tweaks-status : "Not installed");
                                     color: cosmic-tweaks-available ? Theme.accent : Theme.text-muted;
                                     font-size: Theme.font-xs;
                                     horizontal-alignment: center;
@@ -536,7 +924,7 @@ component TweaksTab inherits Rectangle {
                         // fan-control
                         Rectangle {
                             horizontal-stretch: 1;
-                            height: 80px;
+                            height: 72px;
                             background: fan-control-available ? Theme.surface-variant : #151515;
                             border-radius: Theme.radius-md;
                             border-width: 1px;
@@ -546,26 +934,22 @@ component TweaksTab inherits Rectangle {
 
                             fc-touch := TouchArea {
                                 mouse-cursor: fan-control-available ? pointer : default;
-                                clicked => {
-                                    if (fan-control-available) { launch-fan-control(); }
-                                }
+                                clicked => { if (fan-control-available) { launch-fan-control(); } }
                             }
                             VerticalLayout {
                                 padding: Theme.spacing-sm;
                                 spacing: 2px;
                                 alignment: center;
-                                Text { text: "🌀"; font-size: 24px; horizontal-alignment: center; }
+                                Text { text: "🌀"; font-size: 22px; horizontal-alignment: center; }
                                 Text {
                                     text: "Fan Control";
                                     color: fan-control-available ? Theme.text-primary : Theme.text-muted;
-                                    font-size: Theme.font-sm;
+                                    font-size: Theme.font-xs;
                                     font-weight: 600;
                                     horizontal-alignment: center;
                                 }
                                 Text {
-                                    text: fan-control-available
-                                        ? "› Open"
-                                        : (fan-control-status != "" ? fan-control-status : "Not installed");
+                                    text: fan-control-available ? "› Open" : (fan-control-status != "" ? fan-control-status : "Not installed");
                                     color: fan-control-available ? Theme.accent : Theme.text-muted;
                                     font-size: Theme.font-xs;
                                     horizontal-alignment: center;
@@ -577,7 +961,7 @@ component TweaksTab inherits Rectangle {
                         // cosmic-color-picker
                         Rectangle {
                             horizontal-stretch: 1;
-                            height: 80px;
+                            height: 72px;
                             background: color-picker-available ? Theme.surface-variant : #151515;
                             border-radius: Theme.radius-md;
                             border-width: 1px;
@@ -587,26 +971,22 @@ component TweaksTab inherits Rectangle {
 
                             cp-touch := TouchArea {
                                 mouse-cursor: color-picker-available ? pointer : default;
-                                clicked => {
-                                    if (color-picker-available) { launch-color-picker(); }
-                                }
+                                clicked => { if (color-picker-available) { launch-color-picker(); } }
                             }
                             VerticalLayout {
                                 padding: Theme.spacing-sm;
                                 spacing: 2px;
                                 alignment: center;
-                                Text { text: "🎨"; font-size: 24px; horizontal-alignment: center; }
+                                Text { text: "🎨"; font-size: 22px; horizontal-alignment: center; }
                                 Text {
                                     text: "Color Picker";
                                     color: color-picker-available ? Theme.text-primary : Theme.text-muted;
-                                    font-size: Theme.font-sm;
+                                    font-size: Theme.font-xs;
                                     font-weight: 600;
                                     horizontal-alignment: center;
                                 }
                                 Text {
-                                    text: color-picker-available
-                                        ? "› Open"
-                                        : (color-picker-status != "" ? color-picker-status : "Not installed");
+                                    text: color-picker-available ? "› Open" : (color-picker-status != "" ? color-picker-status : "Not installed");
                                     color: color-picker-available ? Theme.accent : Theme.text-muted;
                                     font-size: Theme.font-xs;
                                     horizontal-alignment: center;
@@ -621,7 +1001,7 @@ component TweaksTab inherits Rectangle {
     }
 }
 
-// Cleaner Tab Content
+// Cleaner Tab Content — wrapped in Flickable so all content is reachable
 component CleanerTab inherits Rectangle {
     in property <float> apt-cache-size: 0;
     in property <float> thumbnail-cache-size: 0;
@@ -648,313 +1028,315 @@ component CleanerTab inherits Rectangle {
     
     background: Theme.background;
     
-    VerticalLayout {
-        padding: Theme.spacing-lg;
-        spacing: Theme.spacing-lg;
-        
-        // Header
-        HorizontalLayout {
-            Text {
-                text: "System Cleaner";
-                font-size: Theme.font-xxl;
-                font-weight: 700;
-                color: Theme.text-primary;
-            }
-            Rectangle { horizontal-stretch: 1; }
-            TweakButton {
-                label: is-scanning ? "Scanning..." : "Scan";
-                enabled: !is-scanning && !is-cleaning;
-                clicked => { scan(); }
-            }
-            TweakButton {
-                label: is-cleaning ? "Cleaning..." : "Clean Selected";
-                primary: true;
-                enabled: !is-scanning && !is-cleaning;
-                clicked => { clean(); }
-            }
-        }
-        
-        // Cleanable items
-        Card {
-            title: "Cache & Temporary Files";
+    Flickable {
+        viewport-height: cleaner-content.preferred-height;
+
+        cleaner-content := VerticalLayout {
+            padding: Theme.spacing-lg;
+            spacing: Theme.spacing-lg;
             
-            VerticalLayout {
-                spacing: Theme.spacing-sm;
-                
-                HorizontalLayout {
-                    spacing: Theme.spacing-md;
-                    ToggleSwitch {
-                        label: "APT Package Cache";
-                        checked <=> apt-cache-selected;
-                    }
-                    Text {
-                        text: apt-cache-size > 0 ? round(apt-cache-size) + " MB" : "—";
-                        color: Theme.accent;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                    }
+            // Header
+            HorizontalLayout {
+                Text {
+                    text: "System Cleaner";
+                    font-size: Theme.font-xxl;
+                    font-weight: 700;
+                    color: Theme.text-primary;
                 }
-                
-                HorizontalLayout {
-                    spacing: Theme.spacing-md;
-                    ToggleSwitch {
-                        label: "Thumbnail Cache";
-                        checked <=> thumbnail-selected;
-                    }
-                    Text {
-                        text: thumbnail-cache-size > 0 ? round(thumbnail-cache-size) + " MB" : "—";
-                        color: Theme.accent;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                    }
+                Rectangle { horizontal-stretch: 1; }
+                TweakButton {
+                    label: is-scanning ? "Scanning..." : "Scan";
+                    enabled: !is-scanning && !is-cleaning;
+                    clicked => { scan(); }
                 }
-                
-                HorizontalLayout {
-                    spacing: Theme.spacing-md;
-                    ToggleSwitch {
-                        label: "System Journal Logs";
-                        checked <=> journal-selected;
-                    }
-                    Text {
-                        text: journal-size > 0 ? round(journal-size) + " MB" : "—";
-                        color: Theme.accent;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                    }
-                }
-                
-                HorizontalLayout {
-                    spacing: Theme.spacing-md;
-                    ToggleSwitch {
-                        label: "Temporary Files (/tmp, /var/tmp)";
-                        checked <=> temp-selected;
-                    }
-                    Text {
-                        text: temp-size > 0 ? round(temp-size) + " MB" : "—";
-                        color: Theme.accent;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                    }
+                TweakButton {
+                    label: is-cleaning ? "Cleaning..." : "Clean Selected";
+                    primary: true;
+                    enabled: !is-scanning && !is-cleaning;
+                    clicked => { clean(); }
                 }
             }
-        }
-        
-        Card {
-            title: "Orphaned Packages";
             
-            VerticalLayout {
-                spacing: Theme.spacing-sm;
+            // Cleanable items
+            Card {
+                title: "Cache & Temporary Files";
                 
-                HorizontalLayout {
-                    spacing: Theme.spacing-md;
-                    ToggleSwitch {
-                        label: "Remove orphaned configuration files";
-                        checked <=> orphan-selected;
-                    }
-                    Text {
-                        text: orphan-packages > 0 ? orphan-packages + " packages" : "—";
-                        color: Theme.warning;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-        }
-        
-        Card {
-            title: "🔍 File Analysis (powered by czkawka / krokiet)";
-            
-            VerticalLayout {
-                spacing: Theme.spacing-sm;
-                
-                // Status bar
-                Rectangle {
-                    height: 36px;
-                    background: krokiet-available ? #1a2e1a : (czkawka-cli-available ? #2e2a1a : #2a1a1a);
-                    border-radius: Theme.radius-md;
-                    border-width: 1px;
-                    border-color: krokiet-available ? #44ff44 : (czkawka-cli-available ? #ffaa00 : #ff4444);
+                VerticalLayout {
+                    spacing: Theme.spacing-sm;
                     
                     HorizontalLayout {
-                        padding-left: Theme.spacing-md;
-                        padding-right: Theme.spacing-md;
-                        spacing: Theme.spacing-sm;
-                        
-                        Text {
-                            text: krokiet-available ? "🟢" : (czkawka-cli-available ? "🟡" : "🔴");
-                            font-size: Theme.font-md;
-                            vertical-alignment: center;
+                        spacing: Theme.spacing-md;
+                        ToggleSwitch {
+                            label: "APT Package Cache";
+                            checked <=> apt-cache-selected;
                         }
                         Text {
-                            text: czkawka-status;
-                            color: krokiet-available ? #44ff44 : (czkawka-cli-available ? #ffaa00 : #ff8888);
-                            font-size: Theme.font-sm;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        if is-czkawka-scanning : Text {
-                            text: "⏳ Scanning...";
+                            text: apt-cache-size > 0 ? round(apt-cache-size) + " MB" : "—";
                             color: Theme.accent;
                             font-size: Theme.font-sm;
                             vertical-alignment: center;
                         }
-                        if czkawka-result-count > 0 : Text {
-                            text: czkawka-result-count + " groups found";
-                            color: Theme.warning;
+                    }
+                    
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        ToggleSwitch {
+                            label: "Thumbnail Cache";
+                            checked <=> thumbnail-selected;
+                        }
+                        Text {
+                            text: thumbnail-cache-size > 0 ? round(thumbnail-cache-size) + " MB" : "—";
+                            color: Theme.accent;
                             font-size: Theme.font-sm;
-                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        ToggleSwitch {
+                            label: "System Journal Logs";
+                            checked <=> journal-selected;
+                        }
+                        Text {
+                            text: journal-size > 0 ? round(journal-size) + " MB" : "—";
+                            color: Theme.accent;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                        }
+                    }
+                    
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        ToggleSwitch {
+                            label: "Temporary Files (/tmp, /var/tmp)";
+                            checked <=> temp-selected;
+                        }
+                        Text {
+                            text: temp-size > 0 ? round(temp-size) + " MB" : "—";
+                            color: Theme.accent;
+                            font-size: Theme.font-sm;
                             vertical-alignment: center;
                         }
                     }
                 }
+            }
+            
+            Card {
+                title: "Orphaned Packages";
                 
-                // Description
-                Text {
-                    text: krokiet-available
-                        ? "Click any scan mode below to open krokiet — a powerful file analysis tool with a full GUI."
-                        : (czkawka-cli-available
-                            ? "czkawka_cli is available for headless scans. Install krokiet for the full GUI experience."
-                            : "Install krokiet to enable all file analysis features.");
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-sm;
-                    wrap: word-wrap;
-                }
-                
-                // Grid of scan mode buttons — mirroring krokiet's sidebar order
-                HorizontalLayout {
+                VerticalLayout {
                     spacing: Theme.spacing-sm;
                     
-                    // Column 1
-                    VerticalLayout {
-                        spacing: Theme.spacing-xs;
-                        horizontal-stretch: 1;
-                        
-                        CzkawkaModeButton {
-                            icon: "📄";
-                            label: "Duplicate Files";
-                            description: "Find exact copy files";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("dup"); }
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        ToggleSwitch {
+                            label: "Remove orphaned configuration files";
+                            checked <=> orphan-selected;
                         }
-                        CzkawkaModeButton {
-                            icon: "📭";
-                            label: "Empty Files";
-                            description: "Zero-byte files";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("empty-files"); }
-                        }
-                        CzkawkaModeButton {
-                            icon: "📂";
-                            label: "Empty Directories";
-                            description: "Unused empty folders";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("empty-dirs"); }
-                        }
-                        CzkawkaModeButton {
-                            icon: "🖼";
-                            label: "Similar Images";
-                            description: "Visually similar photos";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("similar-images"); }
-                        }
-                    }
-                    
-                    // Column 2
-                    VerticalLayout {
-                        spacing: Theme.spacing-xs;
-                        horizontal-stretch: 1;
-                        
-                        CzkawkaModeButton {
-                            icon: "🎬";
-                            label: "Similar Videos";
-                            description: "Near-duplicate clips";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("similar-videos"); }
-                        }
-                        CzkawkaModeButton {
-                            icon: "🎵";
-                            label: "Same Music";
-                            description: "Duplicate audio tracks";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("same-music"); }
-                        }
-                        CzkawkaModeButton {
-                            icon: "🔗";
-                            label: "Invalid Symlinks";
-                            description: "Broken symbolic links";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("symlinks"); }
-                        }
-                        CzkawkaModeButton {
-                            icon: "💔";
-                            label: "Broken Files";
-                            description: "Corrupted archives/ZIPs";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("broken"); }
-                        }
-                    }
-                    
-                    // Column 3
-                    VerticalLayout {
-                        spacing: Theme.spacing-xs;
-                        horizontal-stretch: 1;
-                        
-                        CzkawkaModeButton {
-                            icon: "🏷";
-                            label: "Bad Extensions";
-                            description: "Wrong file extensions";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("bad-ext"); }
-                        }
-                        CzkawkaModeButton {
-                            icon: "📦";
-                            label: "Big Files";
-                            description: "Largest files on disk";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("big"); }
-                        }
-                        CzkawkaModeButton {
-                            icon: "🗑";
-                            label: "Temporary Files";
-                            description: "Junk & temp files";
-                            available: krokiet-available || czkawka-cli-available;
-                            scanning: is-czkawka-scanning;
-                            clicked => { launch-czkawka-scan("temp"); }
-                        }
-                        
-                        // Install button (shown when neither tool is found)
-                        if !krokiet-available && !czkawka-cli-available : TweakButton {
-                            label: "⬇ Install krokiet";
-                            primary: true;
-                            enabled: !is-czkawka-scanning;
-                            clicked => { install-krokiet(); }
+                        Text {
+                            text: orphan-packages > 0 ? orphan-packages + " packages" : "—";
+                            color: Theme.warning;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
                         }
                     }
                 }
+            }
+            
+            Card {
+                title: "🔍 File Analysis (powered by czkawka / krokiet)";
                 
-                // Attribution note
-                Text {
-                    text: krokiet-available
-                        ? "Powered by krokiet (Czkawka) — MIT license — github.com/qarmin/czkawka"
-                        : "krokiet — install via: cargo install krokiet --locked";
-                    color: Theme.text-muted;
-                    font-size: Theme.font-xs;
-                    horizontal-alignment: right;
+                VerticalLayout {
+                    spacing: Theme.spacing-sm;
+                    
+                    // Status bar
+                    Rectangle {
+                        height: 36px;
+                        background: krokiet-available ? #1a2e1a : (czkawka-cli-available ? #2e2a1a : #2a1a1a);
+                        border-radius: Theme.radius-md;
+                        border-width: 1px;
+                        border-color: krokiet-available ? #44ff44 : (czkawka-cli-available ? #ffaa00 : #ff4444);
+                        
+                        HorizontalLayout {
+                            padding-left: Theme.spacing-md;
+                            padding-right: Theme.spacing-md;
+                            spacing: Theme.spacing-sm;
+                            
+                            Text {
+                                text: krokiet-available ? "🟢" : (czkawka-cli-available ? "🟡" : "🔴");
+                                font-size: Theme.font-md;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: czkawka-status;
+                                color: krokiet-available ? #44ff44 : (czkawka-cli-available ? #ffaa00 : #ff8888);
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            if is-czkawka-scanning : Text {
+                                text: "⏳ Scanning...";
+                                color: Theme.accent;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                            }
+                            if czkawka-result-count > 0 : Text {
+                                text: czkawka-result-count + " groups found";
+                                color: Theme.warning;
+                                font-size: Theme.font-sm;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    
+                    // Description
+                    Text {
+                        text: krokiet-available
+                            ? "Click any scan mode below to open krokiet — a powerful file analysis tool with a full GUI."
+                            : (czkawka-cli-available
+                                ? "czkawka_cli is available for headless scans. Install krokiet for the full GUI experience."
+                                : "Install krokiet to enable all file analysis features.");
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        wrap: word-wrap;
+                    }
+                    
+                    // Grid of scan mode buttons
+                    HorizontalLayout {
+                        spacing: Theme.spacing-sm;
+                        
+                        // Column 1
+                        VerticalLayout {
+                            spacing: Theme.spacing-xs;
+                            horizontal-stretch: 1;
+                            
+                            CzkawkaModeButton {
+                                icon: "📄";
+                                label: "Duplicate Files";
+                                description: "Find exact copy files";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("dup"); }
+                            }
+                            CzkawkaModeButton {
+                                icon: "📭";
+                                label: "Empty Files";
+                                description: "Zero-byte files";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("empty-files"); }
+                            }
+                            CzkawkaModeButton {
+                                icon: "📂";
+                                label: "Empty Directories";
+                                description: "Unused empty folders";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("empty-dirs"); }
+                            }
+                            CzkawkaModeButton {
+                                icon: "🖼";
+                                label: "Similar Images";
+                                description: "Visually similar photos";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("similar-images"); }
+                            }
+                        }
+                        
+                        // Column 2
+                        VerticalLayout {
+                            spacing: Theme.spacing-xs;
+                            horizontal-stretch: 1;
+                            
+                            CzkawkaModeButton {
+                                icon: "🎬";
+                                label: "Similar Videos";
+                                description: "Near-duplicate clips";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("similar-videos"); }
+                            }
+                            CzkawkaModeButton {
+                                icon: "🎵";
+                                label: "Same Music";
+                                description: "Duplicate audio tracks";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("same-music"); }
+                            }
+                            CzkawkaModeButton {
+                                icon: "🔗";
+                                label: "Invalid Symlinks";
+                                description: "Broken symbolic links";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("symlinks"); }
+                            }
+                            CzkawkaModeButton {
+                                icon: "💔";
+                                label: "Broken Files";
+                                description: "Corrupted archives/ZIPs";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("broken"); }
+                            }
+                        }
+                        
+                        // Column 3
+                        VerticalLayout {
+                            spacing: Theme.spacing-xs;
+                            horizontal-stretch: 1;
+                            
+                            CzkawkaModeButton {
+                                icon: "🏷";
+                                label: "Bad Extensions";
+                                description: "Wrong file extensions";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("bad-ext"); }
+                            }
+                            CzkawkaModeButton {
+                                icon: "📦";
+                                label: "Big Files";
+                                description: "Largest files on disk";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("big"); }
+                            }
+                            CzkawkaModeButton {
+                                icon: "🗑";
+                                label: "Temporary Files";
+                                description: "Junk & temp files";
+                                available: krokiet-available || czkawka-cli-available;
+                                scanning: is-czkawka-scanning;
+                                clicked => { launch-czkawka-scan("temp"); }
+                            }
+                            
+                            // Install button (shown when neither tool is found)
+                            if !krokiet-available && !czkawka-cli-available : TweakButton {
+                                label: "⬇ Install krokiet";
+                                primary: true;
+                                enabled: !is-czkawka-scanning;
+                                clicked => { install-krokiet(); }
+                            }
+                        }
+                    }
+                    
+                    // Attribution note
+                    Text {
+                        text: krokiet-available
+                            ? "Powered by krokiet (Czkawka) — MIT license — github.com/qarmin/czkawka"
+                            : "krokiet — install via: cargo install krokiet --locked";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-xs;
+                        horizontal-alignment: right;
+                    }
                 }
             }
         }
-        
-        Rectangle { vertical-stretch: 1; }
     }
 }
 
@@ -971,93 +1353,133 @@ component BackupTab inherits Rectangle {
     
     background: Theme.background;
     
-    VerticalLayout {
-        padding: Theme.spacing-lg;
-        spacing: Theme.spacing-lg;
-        
-        // Header
-        Text {
-            text: "Backup (Rclone)";
-            font-size: Theme.font-xxl;
-            font-weight: 700;
-            color: Theme.text-primary;
-        }
-        
-        // Remote configuration
-        Card {
-            title: "Remote Configuration";
+    Flickable {
+        viewport-height: backup-content.preferred-height;
+
+        backup-content := VerticalLayout {
+            padding: Theme.spacing-lg;
+            spacing: Theme.spacing-lg;
             
-            VerticalLayout {
-                spacing: Theme.spacing-md;
+            // Header
+            Text {
+                text: "Backup (Rclone)";
+                font-size: Theme.font-xxl;
+                font-weight: 700;
+                color: Theme.text-primary;
+            }
+            
+            // Remote configuration
+            Card {
+                title: "Remote Configuration";
                 
-                HorizontalLayout {
+                VerticalLayout {
                     spacing: Theme.spacing-md;
                     
-                    Text {
-                        text: "Current Remote:";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-md;
-                        vertical-alignment: center;
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        
+                        Text {
+                            text: "Current Remote:";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-md;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: remote-name;
+                            color: is-configured ? Theme.success : Theme.warning;
+                            font-size: Theme.font-md;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
                     }
-                    Text {
-                        text: remote-name;
-                        color: is-configured ? Theme.success : Theme.warning;
-                        font-size: Theme.font-md;
-                        font-weight: 600;
-                        vertical-alignment: center;
+                    
+                    TweakButton {
+                        label: is-configured ? "Change Remote" : "Configure Remote";
+                        clicked => { configure-rclone(); }
                     }
                 }
-                
-                TweakButton {
-                    label: is-configured ? "Change Remote" : "Configure Remote";
-                    clicked => { configure-rclone(); }
-                }
             }
-        }
-        
-        // File selection
-        Card {
-            title: "Files to Backup";
             
-            VerticalLayout {
-                spacing: Theme.spacing-md;
+            // File selection
+            Card {
+                title: "Files to Backup";
                 
-                if queued-files.length == 0 : Text {
-                    text: "No files selected. Click below to choose files.";
-                    color: Theme.text-muted;
-                    font-size: Theme.font-sm;
-                }
-                
-                TweakButton {
-                    label: "Select Files...";
-                    enabled: is-configured && !is-transferring;
-                    clicked => { select-files(); }
+                VerticalLayout {
+                    spacing: Theme.spacing-sm;
+                    
+                    if queued-files.length == 0 : Text {
+                        text: "No files selected. Click below to open the file picker.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-sm;
+                    }
+
+                    // Show count when files are selected
+                    if queued-files.length > 0 : HorizontalLayout {
+                        spacing: Theme.spacing-sm;
+                        Text {
+                            text: "✓ " + queued-files.length + " item(s) selected:";
+                            color: Theme.success;
+                            font-size: Theme.font-sm;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Scrollable list of selected file names
+                    if queued-files.length > 0 : Rectangle {
+                        height: min(queued-files.length * 24px + 12px, 144px);
+                        background: Theme.surface-variant;
+                        border-radius: Theme.radius-sm;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        clip: true;
+
+                        Flickable {
+                            viewport-height: files-list.preferred-height;
+
+                            files-list := VerticalLayout {
+                                padding: 6px;
+                                spacing: 2px;
+
+                                for f in queued-files : Text {
+                                    text: "  📄 " + f;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-xs;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                    
+                    TweakButton {
+                        label: queued-files.length > 0 ? "Change Selection…" : "Select Files…";
+                        enabled: is-configured && !is-transferring;
+                        clicked => { select-files(); }
+                    }
                 }
             }
-        }
-        
-        // Transfer
-        if is-configured : Card {
-            title: "Transfer";
             
-            VerticalLayout {
-                spacing: Theme.spacing-md;
+            // Transfer
+            if is-configured : Card {
+                title: "Transfer";
                 
-                if is-transferring : ProgressBar {
-                    progress: transfer-progress;
-                    label: "Uploading...";
-                }
-                
-                TweakButton {
-                    label: is-transferring ? "Syncing..." : "Start Sync";
-                    primary: true;
-                    enabled: is-configured && queued-files.length > 0 && !is-transferring;
-                    clicked => { start-sync(); }
+                VerticalLayout {
+                    spacing: Theme.spacing-md;
+                    
+                    if is-transferring : ProgressBar {
+                        progress: transfer-progress;
+                        label: "Uploading…";
+                    }
+                    
+                    TweakButton {
+                        label: is-transferring ? "Syncing..." : "Start Sync";
+                        primary: true;
+                        enabled: is-configured && queued-files.length > 0 && !is-transferring;
+                        clicked => { start-sync(); }
+                    }
                 }
             }
         }
-        
-        Rectangle { vertical-stretch: 1; }
     }
 }
 
@@ -1099,7 +1521,6 @@ component BenchmarkTab inherits Rectangle {
                 enabled: !is-running && sysbench-installed && fio-installed;
                 clicked => { run-all(); }
             }
-
         }
         
         if is-running : Card {
@@ -1274,6 +1695,12 @@ export component MainWindow inherits Window {
     // Kernel
     in-out property <bool> watchdog-enabled: true;
     in-out property <int> thp-index: 1;
+
+    // Resource monitor
+    in-out property <float> cpu-usage: 0;
+    in-out property <float> ram-usage-pct: 0;
+    in-out property <int> ram-used-mb: 0;
+    in-out property <int> ram-total-mb: 0;
     
     // Cleaner tab properties
     in-out property <float> apt-cache-size: 0;
@@ -1294,6 +1721,7 @@ export component MainWindow inherits Window {
     // Backup tab properties
     in-out property <string> remote-name: "Not configured";
     in-out property <bool> is-configured: false;
+    in-out property <[string]> queued-file-names: [];
     in-out property <float> transfer-progress: 0;
     in-out property <bool> is-transferring: false;
     
@@ -1307,6 +1735,17 @@ export component MainWindow inherits Window {
     in-out property <string> current-test: "";
     in-out property <bool> sysbench-installed: false;
     in-out property <bool> fio-installed: false;
+    
+    // COSMIC themes
+    in-out property <[CosmicThemeData]> cosmic-themes: [];
+    in-out property <bool> themes-loading: false;
+    in-out property <string> themes-error: "";
+    in-out property <int> installing-theme-id: -1;
+
+    // Toast notification
+    in-out property <bool> show-toast: false;
+    in-out property <string> toast-message: "";
+    in-out property <bool> toast-success: true;
     
     // Callbacks to Rust backend
     callback apply-tweaks;
@@ -1326,6 +1765,8 @@ export component MainWindow inherits Window {
     callback launch-cosmic-tweaks;
     callback launch-fan-control;
     callback launch-color-picker;
+    callback refresh-themes;
+    callback install-theme(int);
     
     // czkawka / krokiet state
     in-out property <bool> krokiet-available: false;
@@ -1435,6 +1876,12 @@ export component MainWindow inherits Window {
                 watchdog-enabled <=> watchdog-enabled;
                 thp-index <=> thp-index;
 
+                // Resource monitor pass-through
+                cpu-usage: cpu-usage;
+                ram-usage-pct: ram-usage-pct;
+                ram-used-mb: ram-used-mb;
+                ram-total-mb: ram-total-mb;
+
                 // COSMIC apps pass-through
                 cosmic-tweaks-available: cosmic-tweaks-available;
                 fan-control-available: fan-control-available;
@@ -1442,6 +1889,12 @@ export component MainWindow inherits Window {
                 cosmic-tweaks-status: cosmic-tweaks-status;
                 fan-control-status: fan-control-status;
                 color-picker-status: color-picker-status;
+
+                // COSMIC themes pass-through
+                cosmic-themes: cosmic-themes;
+                themes-loading: themes-loading;
+                themes-error: themes-error;
+                installing-theme-id: installing-theme-id;
                 
                 apply-tweaks => { apply-tweaks(); }
                 reset-defaults => { reset-defaults(); }
@@ -1449,6 +1902,8 @@ export component MainWindow inherits Window {
                 launch-cosmic-tweaks => { launch-cosmic-tweaks(); }
                 launch-fan-control => { launch-fan-control(); }
                 launch-color-picker => { launch-color-picker(); }
+                refresh-themes => { refresh-themes(); }
+                install-theme(id) => { install-theme(id); }
             }
             
             if active-tab == 1 : CleanerTab {
@@ -1483,6 +1938,7 @@ export component MainWindow inherits Window {
             if active-tab == 2 : BackupTab {
                 remote-name: remote-name;
                 is-configured: is-configured;
+                queued-files: queued-file-names;
                 transfer-progress: transfer-progress;
                 is-transferring: is-transferring;
                 
@@ -1527,5 +1983,14 @@ export component MainWindow inherits Window {
             sudo-error = "";
             sudo-cancel();
         }
+    }
+
+    // Toast notification — positioned bottom-right corner
+    ToastNotification {
+        x: parent.width - self.width - 20px;
+        y: parent.height - self.height - 20px;
+        toast-visible: show-toast;
+        message: toast-message;
+        is-success: toast-success;
     }
 }

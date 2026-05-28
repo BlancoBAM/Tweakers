@@ -139,6 +139,9 @@ tweakers/
 │   ├── main.rs          # Main event loop and UI callback handlers
 │   ├── czkawka.rs       # Czkawka CLI & Krokiet GUI subprocess integration
 │   ├── sudo_handler.rs  # Secure authorization executor
+│   ├── cosmic_apps.rs   # COSMIC applications launching helper
+│   ├── cosmic_themes.rs # Fetch, download, and install COSMIC desktop themes
+│   ├── resource_monitor.rs # Live hardware resources monitor (CPU% and RAM%)
 │   ├── tweaks/          # Kernel & hardware optimization modules
 │   ├── cleaners/        # Temporary directory scanners
 │   ├── backup/          # Rclone cloud storage backup manager

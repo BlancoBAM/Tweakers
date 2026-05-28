@@ -5,9 +5,11 @@ mod benchmark;
 mod sudo_handler;
 mod czkawka;
 mod cosmic_apps;
+mod cosmic_themes;
+mod resource_monitor;
 
 use std::sync::Arc;
-use std::path::PathBuf;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 slint::include_modules!();
@@ -32,6 +34,35 @@ pub enum PendingAction {
     ResetDefaults,
     CleanSystem,
 }
+
+// ─────────────────────────────── Toast helper ─────────────────────────────
+
+/// Show a slide-in toast notification for 3 seconds then hide it.
+fn show_toast(app_weak: &slint::Weak<MainWindow>, message: &str, success: bool) {
+    let msg = message.to_string();
+    let aw = app_weak.clone();
+    slint::invoke_from_event_loop(move || {
+        if let Some(app) = aw.upgrade() {
+            app.set_toast_message(msg.into());
+            app.set_toast_success(success);
+            app.set_show_toast(true);
+        }
+    })
+    .ok();
+
+    let aw2 = app_weak.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        slint::invoke_from_event_loop(move || {
+            if let Some(app) = aw2.upgrade() {
+                app.set_show_toast(false);
+            }
+        })
+        .ok();
+    });
+}
+
+// ─────────────────────────────── Main ─────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -83,11 +114,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_benchmark_callbacks(&app, state.clone());
     setup_sudo_callbacks(&app, state.clone());
     setup_cosmic_app_callbacks(&app, state.clone());
+    setup_cosmic_theme_callbacks(&app);
+
+    // Start live resource monitor — updates CPU/RAM every 2s
+    resource_monitor::start_monitor_task(app.as_weak());
 
     app.run()?;
 
     Ok(())
 }
+
+// ─────────────────────────────── UI init ──────────────────────────────────
 
 async fn initialize_ui(app: &MainWindow, state: &Arc<Mutex<AppState>>) {
     let s = state.lock().await;
@@ -151,7 +188,7 @@ async fn initialize_ui(app: &MainWindow, state: &Arc<Mutex<AppState>>) {
             "czkawka_cli found ✓ (install krokiet for GUI)".into()
         } else {
             "Not installed — install krokiet for full functionality".into()
-        }
+        },
     );
 
     // COSMIC companion app availability flags
@@ -159,6 +196,8 @@ async fn initialize_ui(app: &MainWindow, state: &Arc<Mutex<AppState>>) {
     app.set_fan_control_available(s.cosmic_apps.fan_control_path.is_some());
     app.set_color_picker_available(s.cosmic_apps.color_picker_path.is_some());
 }
+
+// ─────────────────────────────── Tweak callbacks ──────────────────────────
 
 fn setup_tweak_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
     let app_weak = app.as_weak();
@@ -217,26 +256,23 @@ fn setup_tweak_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                 app.set_sudo_action("Apply system tweaks and optimizations".into());
                 app.set_show_sudo_dialog(true);
             }
-        }).ok();
+        })
+        .ok();
     });
 
     let app_weak = app.as_weak();
-    let _state_clone2 = state.clone();
-    let _state_clone = state.clone();
-
     app.on_reset_defaults(move || {
         let app_weak = app_weak.clone();
-
         slint::invoke_from_event_loop(move || {
             if let Some(app) = app_weak.upgrade() {
                 app.set_sudo_action("Reset all settings to system defaults".into());
                 app.set_show_sudo_dialog(true);
             }
-        }).ok();
+        })
+        .ok();
     });
 
     let app_weak = app.as_weak();
-
     app.on_set_profile(move |profile| {
         if let Some(app) = app_weak.upgrade() {
             match profile.as_str() {
@@ -276,6 +312,8 @@ fn setup_tweak_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+// ─────────────────────────────── Cleaner callbacks ────────────────────────
+
 fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
     let app_weak = app.as_weak();
     let state_clone = state.clone();
@@ -305,7 +343,8 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     app.set_orphan_packages(sizes.orphan_count as i32);
                     app.set_is_scanning(false);
                 }
-            }).ok();
+            })
+            .ok();
         });
     });
 
@@ -337,13 +376,13 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                 app.set_sudo_action("Clean selected system files and caches".into());
                 app.set_show_sudo_dialog(true);
             }
-        }).ok();
+        })
+        .ok();
     });
 
     let app_weak2 = app.as_weak();
     let state_cz = state.clone();
 
-    // Legacy find-duplicates: now dispatches through czkawka integration
     app.on_find_duplicates(move || {
         let app_weak3 = app_weak2.clone();
         let state = state_cz.clone();
@@ -355,31 +394,28 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
             };
 
             if let Some(krokiet) = &availability.krokiet_path {
-                // Launch krokiet — it will show as a window focused on duplicate finder
                 match czkawka::launch_krokiet(krokiet, &czkawka::ScanMode::DuplicateFiles) {
                     Ok(()) => log::info!("krokiet launched for duplicate scan"),
                     Err(e) => {
                         log::error!("Failed to launch krokiet: {}", e);
-                        // Fall through to CLI
                         run_cli_duplicate_scan(&app_weak3, &availability).await;
                     }
                 }
             } else if availability.cli_path.is_some() {
                 run_cli_duplicate_scan(&app_weak3, &availability).await;
             } else {
-                // Neither available — show install prompt
                 let hint = czkawka::install_hint();
                 log::warn!("{}", hint);
                 slint::invoke_from_event_loop(move || {
                     if let Some(app) = app_weak3.upgrade() {
                         app.set_czkawka_status(hint.replace('\n', " | ").into());
                     }
-                }).ok();
+                })
+                .ok();
             }
         });
     });
 
-    // New: per-mode launch callback — used by all the scan mode buttons in the UI
     let app_weak_scan = app.as_weak();
     let state_scan = state.clone();
 
@@ -404,7 +440,8 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                             if let Some(app) = app_weak.upgrade() {
                                 app.set_czkawka_status("krokiet opened ✓".into());
                             }
-                        }).ok();
+                        })
+                        .ok();
                     }
                     Err(e) => {
                         let msg = format!("Launch failed: {}", e);
@@ -413,7 +450,8 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                             if let Some(app) = app_weak.upgrade() {
                                 app.set_czkawka_status(msg.into());
                             }
-                        }).ok();
+                        })
+                        .ok();
                     }
                 }
             } else if let Some(cli) = &availability.cli_path {
@@ -426,14 +464,20 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                             app.set_is_czkawka_scanning(true);
                         }
                     }
-                }).ok();
+                })
+                .ok();
 
                 let home = dirs::home_dir().unwrap_or_default();
                 match czkawka::run_cli_scan(cli, &mode, &[home]).await {
                     Ok(groups) => {
                         let count = groups.len();
                         let total_files: usize = groups.iter().map(|g| g.files.len()).sum();
-                        let status = format!("Found {} groups ({} files) | {}", count, total_files, mode.label());
+                        let status = format!(
+                            "Found {} groups ({} files) | {}",
+                            count,
+                            total_files,
+                            mode.label()
+                        );
                         log::info!("{}", status);
                         slint::invoke_from_event_loop(move || {
                             if let Some(app) = app_weak.upgrade() {
@@ -441,7 +485,8 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                                 app.set_czkawka_result_count(count as i32);
                                 app.set_is_czkawka_scanning(false);
                             }
-                        }).ok();
+                        })
+                        .ok();
                     }
                     Err(e) => {
                         let msg = format!("Scan error: {}", e);
@@ -451,7 +496,8 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                                 app.set_czkawka_status(msg.into());
                                 app.set_is_czkawka_scanning(false);
                             }
-                        }).ok();
+                        })
+                        .ok();
                     }
                 }
             } else {
@@ -460,12 +506,12 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     if let Some(app) = app_weak.upgrade() {
                         app.set_czkawka_status(hint.replace('\n', " | ").into());
                     }
-                }).ok();
+                })
+                .ok();
             }
         });
     });
 
-    // Install krokiet callback
     let app_weak_install = app.as_weak();
     app.on_install_krokiet(move || {
         let app_weak = app_weak_install.clone();
@@ -474,11 +520,14 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                 let app_weak = app_weak.clone();
                 move || {
                     if let Some(app) = app_weak.upgrade() {
-                        app.set_czkawka_status("Installing krokiet via cargo… this may take a while".into());
+                        app.set_czkawka_status(
+                            "Installing krokiet via cargo… this may take a while".into(),
+                        );
                         app.set_is_czkawka_scanning(true);
                     }
                 }
-            }).ok();
+            })
+            .ok();
 
             let result = tokio::process::Command::new("cargo")
                 .args(["install", "krokiet", "--locked"])
@@ -491,7 +540,13 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     true,
                 ),
                 Ok(out) => (
-                    format!("Install failed: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("unknown error")),
+                    format!(
+                        "Install failed: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                            .lines()
+                            .last()
+                            .unwrap_or("unknown error")
+                    ),
                     false,
                 ),
                 Err(e) => (format!("cargo not found: {}", e), false),
@@ -503,18 +558,17 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     app.set_czkawka_status(status_msg.into());
                     app.set_is_czkawka_scanning(false);
                     if success {
-                        // Re-detect after install
                         let avail = czkawka::detect_tools();
                         app.set_krokiet_available(avail.krokiet_path.is_some());
                         app.set_czkawka_cli_available(avail.cli_path.is_some());
                     }
                 }
-            }).ok();
+            })
+            .ok();
         });
     });
 }
 
-/// Helper: parse a mode string from the UI into a ScanMode enum.
 fn parse_scan_mode(s: &str) -> czkawka::ScanMode {
     match s {
         "dup" | "duplicates" => czkawka::ScanMode::DuplicateFiles,
@@ -532,7 +586,6 @@ fn parse_scan_mode(s: &str) -> czkawka::ScanMode {
     }
 }
 
-/// Helper: run a CLI duplicate scan and update app status.
 async fn run_cli_duplicate_scan(
     app_weak: &slint::Weak<MainWindow>,
     availability: &czkawka::CzkawkaAvailability,
@@ -551,12 +604,15 @@ async fn run_cli_duplicate_scan(
                         app.set_czkawka_result_count(count as i32);
                         app.set_czkawka_status(msg.into());
                     }
-                }).ok();
+                })
+                .ok();
             }
             Err(e) => log::error!("CLI scan error: {}", e),
         }
     }
 }
+
+// ─────────────────────────────── Backup callbacks ─────────────────────────
 
 fn setup_backup_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
     app.on_configure_rclone(move || {
@@ -565,25 +621,25 @@ fn setup_backup_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
         }
     });
 
-    let _app_weak2 = app.as_weak();
+    let app_weak = app.as_weak();
     let state_clone = state.clone();
 
     app.on_select_backup_files(move || {
+        let app_weak = app_weak.clone();
         let state = state_clone.clone();
 
         tokio::spawn(async move {
-            let output = std::process::Command::new("zenity")
-                .args(["--file-selection", "--multiple", "--separator=\n", "--title=Select files to backup"])
-                .output();
-
-            if let Ok(output) = output {
-                if output.status.success() {
-                    let files: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .map(PathBuf::from)
-                        .collect();
-
+            match backup::pick_files_native().await {
+                Ok(files) if !files.is_empty() => {
                     let file_count = files.len();
+
+                    // Collect display names for the UI
+                    let display_names: Vec<slint::SharedString> = files
+                        .iter()
+                        .map(|p| {
+                            p.to_string_lossy().to_string().into()
+                        })
+                        .collect();
 
                     {
                         let mut s = state.lock().await;
@@ -591,6 +647,32 @@ fn setup_backup_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     }
 
                     log::info!("Selected {} files for backup", file_count);
+
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(app) = app_weak.upgrade() {
+                            let model: slint::ModelRc<slint::SharedString> =
+                                slint::ModelRc::new(slint::VecModel::from(display_names));
+                            app.set_queued_file_names(model);
+                        }
+                    })
+                    .ok();
+                }
+                Ok(_) => {
+                    // User cancelled — do nothing
+                    log::info!("File picker cancelled");
+                }
+                Err(e) => {
+                    log::error!("File picker error: {}", e);
+                    let msg = format!("File picker error: {}", e);
+                    let app_weak2 = app_weak.clone();
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(app) = app_weak2.upgrade() {
+                            app.set_toast_message(msg.into());
+                            app.set_toast_success(false);
+                            app.set_show_toast(true);
+                        }
+                    })
+                    .ok();
                 }
             }
         });
@@ -619,7 +701,8 @@ fn setup_backup_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                                 app.set_transfer_progress(0.0);
                             }
                         }
-                    }).ok();
+                    })
+                    .ok();
 
                     let app_weak_progress = app_weak.clone();
                     match backup::sync_to_remote(&remote, &files, |progress, _status| {
@@ -628,23 +711,31 @@ fn setup_backup_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                             if let Some(app) = app_weak.upgrade() {
                                 app.set_transfer_progress(progress);
                             }
-                        }).ok();
-                    }).await {
+                        })
+                        .ok();
+                    })
+                    .await
+                    {
                         Ok(()) => {
+                            show_toast(&app_weak, "Backup completed successfully! ✓", true);
                             slint::invoke_from_event_loop(move || {
                                 if let Some(app) = app_weak.upgrade() {
                                     app.set_is_transferring(false);
                                     app.set_transfer_progress(1.0);
                                 }
-                            }).ok();
+                            })
+                            .ok();
                         }
                         Err(e) => {
                             log::error!("Backup failed: {}", e);
+                            let msg = format!("Backup failed: {}", e);
+                            show_toast(&app_weak, &msg, false);
                             slint::invoke_from_event_loop(move || {
                                 if let Some(app) = app_weak.upgrade() {
                                     app.set_is_transferring(false);
                                 }
-                            }).ok();
+                            })
+                            .ok();
                         }
                     }
                 }
@@ -652,6 +743,8 @@ fn setup_backup_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
         });
     });
 }
+
+// ─────────────────────────────── Benchmark callbacks ──────────────────────
 
 fn setup_benchmark_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
     let app_weak = app.as_weak();
@@ -671,7 +764,8 @@ fn setup_benchmark_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     app.set_current_test(bench_type.into());
                 }
             }
-        }).ok();
+        })
+        .ok();
 
         tokio::spawn(async move {
             let default = benchmark::BenchmarkResults::default();
@@ -721,10 +815,13 @@ fn setup_benchmark_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     app.set_is_running(false);
                     app.set_current_test(slint::SharedString::new());
                 }
-            }).ok();
+            })
+            .ok();
         });
     });
 }
+
+// ─────────────────────────────── Sudo callbacks ───────────────────────────
 
 fn setup_sudo_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
     let app_weak = app.as_weak();
@@ -743,7 +840,8 @@ fn setup_sudo_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     app.set_sudo_error("".into());
                 }
             }
-        }).ok();
+        })
+        .ok();
 
         tokio::spawn(async move {
             let askpass_content = format!("#!/bin/sh\necho '{}'\n", password);
@@ -755,10 +853,13 @@ fn setup_sudo_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     move || {
                         if let Some(app) = app_weak.upgrade() {
                             app.set_sudo_loading(false);
-                            app.set_sudo_error(format!("Failed to create askpass helper: {}", e).into());
+                            app.set_sudo_error(
+                                format!("Failed to create askpass helper: {}", e).into(),
+                            );
                         }
                     }
-                }).ok();
+                })
+                .ok();
                 return;
             }
 
@@ -768,23 +869,35 @@ fn setup_sudo_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                 .await;
 
             let verify_output = tokio::process::Command::new("bash")
-                .args(["-c", &format!("SUDO_ASKPASS={} sudo -A -n true 2>&1", askpass_path)])
+                .args([
+                    "-c",
+                    &format!(
+                        "SUDO_ASKPASS={} sudo -A -n true 2>&1",
+                        askpass_path
+                    ),
+                ])
                 .env("SUDO_ASKPASS", &askpass_path)
                 .env("DISPLAY", ":0")
                 .output()
                 .await;
 
-            if !verify_output.map(|o| o.status.success()).unwrap_or(false) {
+            if !verify_output
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
                 let _ = tokio::fs::remove_file(&askpass_path).await;
                 slint::invoke_from_event_loop({
                     let app_weak = app_weak.clone();
                     move || {
                         if let Some(app) = app_weak.upgrade() {
                             app.set_sudo_loading(false);
-                            app.set_sudo_error("Incorrect password or no sudo privileges".into());
+                            app.set_sudo_error(
+                                "Incorrect password or no sudo privileges".into(),
+                            );
                         }
                     }
-                }).ok();
+                })
+                .ok();
                 return;
             }
 
@@ -815,10 +928,19 @@ fn setup_sudo_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
 
             match result {
                 Ok(()) => {
+                    let success_msg = match pending {
+                        PendingAction::ApplyTweaks => "Settings applied successfully! ✓",
+                        PendingAction::ResetDefaults => "Settings reset to defaults ✓",
+                        PendingAction::CleanSystem => "System cleaned successfully! ✓",
+                        PendingAction::None => "Done ✓",
+                    };
+
                     {
                         let mut s = state.lock().await;
                         s.pending_action = PendingAction::None;
                     }
+
+                    show_toast(&app_weak, success_msg, true);
 
                     slint::invoke_from_event_loop(move || {
                         if let Some(app) = app_weak.upgrade() {
@@ -834,26 +956,32 @@ fn setup_sudo_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                                     slint::invoke_from_event_loop(move || {
                                         if let Some(app) = app_weak2.upgrade() {
                                             app.set_apt_cache_size(sizes.apt_cache_mb as f32);
-                                            app.set_thumbnail_cache_size(sizes.thumbnail_cache_mb as f32);
+                                            app.set_thumbnail_cache_size(
+                                                sizes.thumbnail_cache_mb as f32,
+                                            );
                                             app.set_journal_size(sizes.journal_mb as f32);
                                             app.set_temp_size(sizes.temp_mb as f32);
                                             app.set_orphan_packages(sizes.orphan_count as i32);
                                         }
-                                    }).ok();
+                                    })
+                                    .ok();
                                 });
                             }
                         }
-                    }).ok();
+                    })
+                    .ok();
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
                     log::error!("Operation failed: {}", error_msg);
+                    show_toast(&app_weak, &format!("Operation failed: {}", error_msg), false);
                     slint::invoke_from_event_loop(move || {
                         if let Some(app) = app_weak.upgrade() {
                             app.set_sudo_error(error_msg.into());
                             app.set_sudo_loading(false);
                         }
-                    }).ok();
+                    })
+                    .ok();
                 }
             }
         });
@@ -878,8 +1006,10 @@ fn setup_sudo_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+// ─────────────────────────────── COSMIC app callbacks ────────────────────
+
 fn setup_cosmic_app_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
-    // ── cosmic-tweaks ──────────────────────────────────────────────────────
+    // cosmic-tweaks
     let state_ct = state.clone();
     let app_weak_ct = app.as_weak();
     app.on_launch_cosmic_tweaks(move || {
@@ -900,7 +1030,8 @@ fn setup_cosmic_app_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                             if let Some(app) = app_weak.upgrade() {
                                 app.set_cosmic_tweaks_status(msg.into());
                             }
-                        }).ok();
+                        })
+                        .ok();
                     }
                 },
                 None => {
@@ -909,16 +1040,17 @@ fn setup_cosmic_app_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     slint::invoke_from_event_loop(move || {
                         if let Some(app) = app_weak.upgrade() {
                             app.set_cosmic_tweaks_status(
-                                "Not installed — see github.com/cosmic-utils/tweaks".into()
+                                "Not installed — see github.com/cosmic-utils/tweaks".into(),
                             );
                         }
-                    }).ok();
+                    })
+                    .ok();
                 }
             }
         });
     });
 
-    // ── fan-control ────────────────────────────────────────────────────────
+    // fan-control
     let state_fc = state.clone();
     let app_weak_fc = app.as_weak();
     app.on_launch_fan_control(move || {
@@ -939,7 +1071,8 @@ fn setup_cosmic_app_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                             if let Some(app) = app_weak.upgrade() {
                                 app.set_fan_control_status(msg.into());
                             }
-                        }).ok();
+                        })
+                        .ok();
                     }
                 },
                 None => {
@@ -947,16 +1080,17 @@ fn setup_cosmic_app_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     slint::invoke_from_event_loop(move || {
                         if let Some(app) = app_weak.upgrade() {
                             app.set_fan_control_status(
-                                "Not installed — see github.com/wiiznokes/fan-control".into()
+                                "Not installed — see github.com/wiiznokes/fan-control".into(),
                             );
                         }
-                    }).ok();
+                    })
+                    .ok();
                 }
             }
         });
     });
 
-    // ── cosmic-color-picker ────────────────────────────────────────────────
+    // cosmic-color-picker
     let state_cp = state.clone();
     let app_weak_cp = app.as_weak();
     app.on_launch_color_picker(move || {
@@ -977,7 +1111,8 @@ fn setup_cosmic_app_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                             if let Some(app) = app_weak.upgrade() {
                                 app.set_color_picker_status(msg.into());
                             }
-                        }).ok();
+                        })
+                        .ok();
                     }
                 },
                 None => {
@@ -985,12 +1120,152 @@ fn setup_cosmic_app_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                     slint::invoke_from_event_loop(move || {
                         if let Some(app) = app_weak.upgrade() {
                             app.set_color_picker_status(
-                                "Not installed — see github.com/PixelDoted/cosmic-color-picker".into()
+                                "Not installed — see github.com/PixelDoted/cosmic-color-picker"
+                                    .into(),
                             );
                         }
-                    }).ok();
+                    })
+                    .ok();
                 }
             }
+        });
+    });
+}
+
+// ─────────────────────────────── COSMIC themes callbacks ──────────────────
+
+fn setup_cosmic_theme_callbacks(app: &MainWindow) {
+    // Refresh themes from cosmic-themes.org
+    let app_weak = app.as_weak();
+    app.on_refresh_themes(move || {
+        let app_weak = app_weak.clone();
+
+        slint::invoke_from_event_loop({
+            let app_weak = app_weak.clone();
+            move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.set_themes_loading(true);
+                    app.set_themes_error("".into());
+                }
+            }
+        })
+        .ok();
+
+        tokio::spawn(async move {
+            match cosmic_themes::fetch_themes().await {
+                Ok(themes) => {
+                    // Convert to Slint model structs
+                    let slint_themes: Vec<_> = themes
+                        .iter()
+                        .map(|t| {
+                            CosmicThemeData {
+                                id: t.id as i32,
+                                name: t.name.clone().into(),
+                                author: t.author.clone().into(),
+                                is_dark: t.is_dark,
+                                accent_r: t.accent_r as i32,
+                                accent_g: t.accent_g as i32,
+                                accent_b: t.accent_b as i32,
+                                bg_r: t.bg_r as i32,
+                                bg_g: t.bg_g as i32,
+                                bg_b: t.bg_b as i32,
+                                downloads: t.downloads as i32,
+                            }
+                        })
+                        .collect();
+
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(app) = app_weak.upgrade() {
+                            let model = slint::ModelRc::new(slint::VecModel::from(slint_themes));
+                            app.set_cosmic_themes(model);
+                            app.set_themes_loading(false);
+                            app.set_themes_error("".into());
+                        }
+                    })
+                    .ok();
+                }
+                Err(e) => {
+                    let msg = format!("Failed to fetch themes: {}", e);
+                    log::error!("{}", msg);
+                    slint::invoke_from_event_loop(move || {
+                        if let Some(app) = app_weak.upgrade() {
+                            app.set_themes_loading(false);
+                            app.set_themes_error(msg.into());
+                        }
+                    })
+                    .ok();
+                }
+            }
+        });
+    });
+
+    // Install a theme by ID
+    let app_weak = app.as_weak();
+    app.on_install_theme(move |theme_id| {
+        let app_weak = app_weak.clone();
+
+        // Mark as installing
+        slint::invoke_from_event_loop({
+            let app_weak = app_weak.clone();
+            move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.set_installing_theme_id(theme_id);
+                }
+            }
+        })
+        .ok();
+
+        tokio::spawn(async move {
+            // Look up the theme from the cached themes list
+            // We need to re-fetch or use cache — use fetch_themes (will use cache if fresh)
+            let theme_result = async {
+                let themes = cosmic_themes::fetch_themes().await?;
+                themes
+                    .into_iter()
+                    .find(|t| t.id == theme_id as u32)
+                    .ok_or_else(|| {
+                        Box::<dyn std::error::Error + Send + Sync>::from(
+                            format!("Theme id {} not found", theme_id),
+                        )
+                    })
+            }
+            .await;
+
+            match theme_result {
+                Ok(theme) => {
+                    match cosmic_themes::download_and_install_theme(&theme).await {
+                        Ok(()) => {
+                            let name = theme.name.clone();
+                            show_toast(
+                                &app_weak,
+                                &format!(
+                                    "Theme '{}' installed! Log out and back in to apply ✓",
+                                    name
+                                ),
+                                true,
+                            );
+                        }
+                        Err(e) => {
+                            let msg = format!("Install failed: {}", e);
+                            log::error!("{}", msg);
+                            show_toast(&app_weak, &msg, false);
+                        }
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("Could not find theme: {}", e);
+                    log::error!("{}", msg);
+                    show_toast(&app_weak, &msg, false);
+                }
+            }
+
+            // Clear installing marker
+            slint::invoke_from_event_loop(move || {
+                if let Some(app) = app_weak.upgrade() {
+                    app.set_installing_theme_id(-1);
+                }
+            })
+            .ok();
         });
     });
 }
