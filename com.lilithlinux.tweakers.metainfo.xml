@@ -25,6 +25,20 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.2" date="2026-05-28">
+      <description>
+        <p>Feature update with bug fixes and new capabilities.</p>
+        <ul>
+          <li>Fixed sudo password dialog to use a real interactive TextInput with Enter-key submit</li>
+          <li>Fixed Cleaner tab scrolling by wrapping content in a Flickable viewport</li>
+          <li>Replaced zenity file picker with native xdg-desktop-portal via ashpd (with zenity/kdialog/yad fallback)</li>
+          <li>Added live CPU% and RAM% resource monitor bar in the Tweaks tab</li>
+          <li>Added COSMIC Themes browser — browse, preview, and install themes from cosmic-themes.org</li>
+          <li>Added slide-in toast notifications for all action success and error paths</li>
+          <li>Updated launcher icon to scalable SVG for crisp rendering at all sizes</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.0" date="2025-01-01">
       <description>
         <p>Initial release with Lilith Linux integration.</p>

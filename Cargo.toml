@@ -1,6 +1,6 @@
 [package]
 name = "tweakers"
-version = "1.0.0"
+version = "1.0.2"
 edition = "2021"
 description = "System optimization and utility tool for Lilith Linux"
 authors = ["Lilith Linux Team"]
