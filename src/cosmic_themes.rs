@@ -290,13 +290,30 @@ fn fetch_and_download(theme_id: u32) -> Result<(String, Vec<u8>), Box<dyn std::e
 
     // POST to the download endpoint
     let download_url = format!("https://cosmic-themes.org/{}/download/", theme_id);
-    let bytes = client
+    let resp = client
         .post(&download_url)
         .header("Referer", &page_url)
+        .header("X-CSRFToken", &csrf)
         .form(&[("csrfmiddlewaretoken", &csrf)])
-        .send()?
-        .bytes()?
-        .to_vec();
+        .send()?;
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let bytes = resp.bytes()?.to_vec();
+
+    // Validate that we actually got an archive, not an HTML error page
+    if content_type.contains("text/html") || (!bytes.starts_with(b"PK") && !bytes.starts_with(b"\x1f\x8b")) {
+        let preview = String::from_utf8_lossy(&bytes[..bytes.len().min(200)]);
+        return Err(format!(
+            "Server returned HTML instead of an archive. The theme may not be available for download.\nPreview: {}",
+            preview
+        ).into());
+    }
 
     Ok((csrf, bytes))
 }

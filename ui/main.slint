@@ -788,8 +788,7 @@ component TweaksTab inherits Rectangle {
                         TweakButton {
                             label: "🌐 Open Site";
                             clicked => {
-                                // opens in default browser via Rust callback
-                                refresh-themes();
+                                open-site("https://cosmic-themes.org/");
                             }
                         }
                     }

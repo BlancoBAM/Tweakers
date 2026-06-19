@@ -567,6 +567,16 @@ fn setup_cleaner_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
             .ok();
         });
     });
+
+    // Open a URL in the system default browser
+    app.on_open_site(move |url| {
+        let url = url.to_string();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("xdg-open")
+                .arg(&url)
+                .spawn();
+        });
+    });
 }
 
 fn parse_scan_mode(s: &str) -> czkawka::ScanMode {
