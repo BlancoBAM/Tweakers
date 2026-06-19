@@ -878,16 +878,12 @@ fn setup_sudo_callbacks(app: &MainWindow, state: Arc<Mutex<AppState>>) {
                 .output()
                 .await;
 
-            let verify_output = tokio::process::Command::new("bash")
-                .args([
-                    "-c",
-                    &format!(
-                        "SUDO_ASKPASS={} sudo -A -n true 2>&1",
-                        askpass_path
-                    ),
-                ])
+            // Verify sudo access using ASKPASS helper
+            // Note: Do NOT use -n (non-interactive) as it blocks ASKPASS on Wayland/COSMIC
+            let verify_output = tokio::process::Command::new("sudo")
+                .args(["-A", "true"])
                 .env("SUDO_ASKPASS", &askpass_path)
-                .env("DISPLAY", ":0")
+                .env_remove("DISPLAY")  // Wayland doesn't use DISPLAY=:0
                 .output()
                 .await;
 
