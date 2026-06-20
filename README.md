@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.jpg" alt="Tweakers Logo" width="400" style="border-radius: 20px; box-shadow: 0 8px 24px rgba(255, 68, 68, 0.2);" />
+  <img src="assets/icons/tweakers-256.png" alt="Tweakers Logo" width="300" style="border-radius: 20px; box-shadow: 0 8px 24px rgba(255, 68, 68, 0.2);" />
 </p>
 
 <h1 align="center">Tweakers ⚡</h1>
